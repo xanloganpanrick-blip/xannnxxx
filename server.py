@@ -789,9 +789,14 @@ async def handle_health(request):
 
 
 async def handle_root(request):
-    """Корневой эндпоинт — отдаёт фронтенд (сайт.html). Railway health-check работает через /health."""
+    """Корневой эндпоинт — отдаёт HTML браузеру, JSON для API/health-check."""
+    # Railway health-check шлёт GET / без Accept-заголовка → отдаём быстрый JSON
+    accept = request.headers.get("Accept", "")
+    if "text/html" not in accept:
+        return web.json_response({"ok": True, "message": "X Backend v11.0", "status": "running"})
+    # Браузер → отдаём фронтенд
     try:
-        html_path = os.path.join(os.path.dirname(__file__), "сайт.html")
+        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "сайт.html")
         with open(html_path, "r", encoding="utf-8") as f:
             html = f.read()
         return web.Response(text=html, content_type="text/html; charset=utf-8")
@@ -905,37 +910,47 @@ app.router.add_post("/full-probev", handle_full_probev)
 async def on_startup(app):
     """Вызывается при старте приложения."""
     port = app["port"]
-    print("=" * 60)
-    print(f"X Backend v11.0 ЗАПУЩЕН")
-    print(f"Host: 0.0.0.0  |  Port: {port}")
-    print(f"Environment PORT: {os.environ.get('PORT', 'не задан')}")
-    print("=" * 60)
+    msg = (
+        "=" * 60 + "\n"
+        f"X Backend v11.0 ЗАПУЩЕН\n"
+        f"Host: 0.0.0.0  |  Port: {port}\n"
+        f"Environment PORT: {os.environ.get('PORT', 'не задан')}\n"
+        + "=" * 60
+    )
+    print(msg, flush=True)
 
 
 async def on_shutdown(app):
-    """Вызывается при остановке (SIGTERM/SIGINT от Railway)."""
-    print("[SHUTDOWN] Получен сигнал остановки, закрываю соединения...")
-    # Закрываем все Telegram-клиенты
+    """Вызывается при остановке (SIGTERM от Railway)."""
+    print("[SHUTDOWN] Получен сигнал остановки, закрываю соединения...", flush=True)
     for ss, client in list(user_clients.items()):
         try:
             if client.is_connected():
                 await client.disconnect()
-                print(f"[SHUTDOWN] Клиент отключён: {ss[:10]}...")
+                print(f"[SHUTDOWN] Клиент отключён: {ss[:10]}...", flush=True)
         except Exception:
             pass
     user_clients.clear()
     sessions.clear()
     pending_confirms.clear()
-    print("[SHUTDOWN] Завершено.")
+    print("[SHUTDOWN] Завершено.", flush=True)
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 4545))
-    app["port"] = port
+    import sys
+    print("[START] Инициализация...", flush=True)
+    try:
+        port = int(os.environ.get("PORT", 4545))
+        app["port"] = port
 
-    # Регистрируем обработчики жизненного цикла
-    app.on_startup.append(on_startup)
-    app.on_shutdown.append(on_shutdown)
+        app.on_startup.append(on_startup)
+        app.on_shutdown.append(on_shutdown)
 
-    # Railway отправляет SIGTERM — aiohttp обрабатывает его корректно
-    web.run_app(app, host="0.0.0.0", port=port, handle_signals=True)
+        print(f"[START] Запуск на 0.0.0.0:{port}...", flush=True)
+        # Без handle_signals — Docker сам пришлёт SIGTERM PID 1, aiohttp поймает через asyncio
+        web.run_app(app, host="0.0.0.0", port=port)
+    except Exception as e:
+        print(f"[FATAL] Ошибка запуска: {e}", flush=True)
+        traceback.print_exc()
+        sys.stderr.flush()
+        sys.exit(1)
