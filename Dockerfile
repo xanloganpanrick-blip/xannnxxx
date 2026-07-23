@@ -2,23 +2,28 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Устанавливаем системные зависимости (если нужны)
+# Системные зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Копируем и устанавливаем Python-зависимости
+# Python-зависимости
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем код приложения
+# Код
 COPY server.py .
 
-# Создаём папку для временных файлов
+# Временные файлы
 RUN mkdir -p temp_files
 
-# Порт
-EXPOSE 8765
+# Railway сам задаст PORT, 4545 — fallback
+ENV PORT=4545
 
-# Запуск
+EXPOSE ${PORT}
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health')" || exit 1
+
 CMD ["python", "server.py"]

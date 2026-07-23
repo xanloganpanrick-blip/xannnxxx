@@ -1,0 +1,7 @@
+__pycache__
+*.pyc
+temp_files/
+.git/
+*.ipynb
+сайт.html
+bot.py

@@ -788,6 +788,11 @@ async def handle_health(request):
     return web.json_response({"ok": True, "message": "X Backend v11.0"})
 
 
+async def handle_root(request):
+    """Корневой эндпоинт — нужен для Railway health-check"""
+    return web.json_response({"ok": True, "message": "X Backend v11.0", "status": "running"})
+
+
 async def handle_send_code(request):
     """Отправка кода подтверждения Telegram"""
     try:
@@ -884,6 +889,7 @@ async def handle_full_probev(request):
 
 # ====================== ЗАПУСК ======================
 app = web.Application(middlewares=[cors_middleware])
+app.router.add_get("/", handle_root)
 app.router.add_get("/health", handle_health)
 app.router.add_post("/send-code", handle_send_code)
 app.router.add_post("/verify-code", handle_verify_code)
