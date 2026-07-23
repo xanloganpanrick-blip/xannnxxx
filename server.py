@@ -480,6 +480,43 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         log.append(f"[{ts}] {msg}")
         print(f"[LOG] {msg}")
 
+    async def send_status(stage_label):
+        """Отправляет текущее состояние таблицы в бот-уведомитель."""
+        if bot_token and chat_id:
+            wb.save(result_file)
+            await send_file_to_bot(bot_token, chat_id, result_file,
+                                   f"Таблица после: {stage_label}")
+
+    # === ПРЕД-ФИЛЬТР ПО ГОДАМ (дублирует фронтенд для надёжности) ===
+    if year_range:
+        try:
+            parts = year_range.split('-')
+            yf, yt = int(parts[0]), int(parts[1])
+            before = len(original_rows)
+            filtered = []
+            removed_out = 0
+            for row in original_rows:
+                date_str = str(row[1] if len(row) > 1 else "").strip()  # row[1] = дата
+                if not date_str or date_str == 'None' or date_str == '0':
+                    filtered.append(row)  # нет даты — оставляем, будем пробивать
+                    continue
+                parsed = parse_date(date_str)
+                if not parsed:
+                    filtered.append(row)  # не смогли распарсить — оставляем
+                    continue
+                try:
+                    year = int(parsed.split('.')[2])
+                    if yf <= year <= yt:
+                        filtered.append(row)
+                    else:
+                        removed_out += 1
+                except ValueError:
+                    filtered.append(row)
+            original_rows = filtered
+            add(f"[ПРЕД-ФИЛЬТР] {yf}-{yt}: удалено {removed_out} строк (дата вне диапазона), оставлено {len(original_rows)}")
+        except Exception as e:
+            add(f"[ПРЕД-ФИЛЬТР] Ошибка: {e}")
+
     # === СОЗДАЕМ ИТОГОВУЮ ТАБЛИЦУ ===
     result_file = os.path.join(TEMP_DIR, f"result_{int(time.time())}.xlsx")
     wb = Workbook()
@@ -498,6 +535,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         ])
     wb.save(result_file)
     add(f"Таблица создана: {ws.max_row - 1} строк")
+    await send_status("создание таблицы")
 
     # === АНАЛИЗИРУЕМ ЧТО РЕАЛЬНО НУЖНО ПРОБИТЬ ===
     # Фильтруем СНИЛС: только для строк где ПУСТАЯ дата в колонке C
@@ -553,6 +591,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             add(f"Получено ответов от бот1: {len(recs)}")
             fill_dates_from_response(ws, recs)
             wb.save(result_file)
+            await send_status("этап 1 (ФИО+номер → бот1)")
             await send_file_to_bot(bot_token, chat_id, rpath, f"Этап 1: {len(recs)} ответов")
         else:
             add("[!] Бот1 не ответил на этапе 1")
@@ -597,6 +636,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             add(f"Получено через СНИЛС бот1: {len(recs)}")
             fill_snils_dates(ws, recs)
             wb.save(result_file)
+            await send_status("этап 2 (СНИЛС → бот1)")
             await send_file_to_bot(bot_token, chat_id, rpath, f"Этап 2: {len(recs)} ответов")
         else:
             add("[!] Бот1 не ответил на этапе 2")
@@ -645,6 +685,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             add(f"Получено через СНИЛС бот2: {len(recs)}")
             fill_snils_dates(ws, recs)
             wb.save(result_file)
+            await send_status("этап 3 (СНИЛС → бот2)")
             await send_file_to_bot(bot_token, chat_id, rpath, f"Этап 3: {len(recs)} ответов")
         else:
             add("[!] Бот2 не ответил на этапе 3")
@@ -678,6 +719,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             for row in reversed(rows_to_delete):
                 ws.delete_rows(row)
             wb.save(result_file)
+            await send_status(f"этап 4 (фильтр {yf}-{yt})")
             add(f"Удалено строк: {len(rows_to_delete)}, осталось: {ws.max_row - 1}")
         except Exception as e:
             add(f"Ошибка фильтра годов: {e}")
@@ -722,6 +764,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             add(f"Получено ответов: {len(recs)}")
             fill_phones_from_response(ws, recs)
             wb.save(result_file)
+            await send_status("этап 5 (ФИО+дата → бот1)")
             await send_file_to_bot(bot_token, chat_id, rpath, f"Этап 5: {len(recs)} ответов")
         else:
             add("[!] Бот1 не ответил на этапе 5")
@@ -785,6 +828,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                 add(f"  Ошибка добива для {fio}: {e}")
 
         wb.save(result_file)
+        await send_status("этап 6 (добив → бот2)")
         add("Добив завершён")
     else:
         add("ЭТАП 6 пропущен (нет строк без номера)")
@@ -801,6 +845,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             total_phones += 1
     add(f"Итого: строк={ws.max_row-1}, с датами={total_dates}, с номерами={total_phones}")
 
+    await send_status("ФИНАЛ (все этапы)")
     await send_file_to_bot(bot_token, chat_id, result_file, "ИТОГОВЫЙ ФАЙЛ (все этапы)")
 
     return {"ok": True, "log": log}
