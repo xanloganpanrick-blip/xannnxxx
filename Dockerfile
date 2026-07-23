@@ -18,12 +18,7 @@ COPY server.py .
 # Временные файлы
 RUN mkdir -p temp_files
 
-# Railway сам задаст PORT, 4545 — fallback
-ENV PORT=4545
-
-EXPOSE ${PORT}
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health')" || exit 1
+# Railway передаст свой PORT — не переопределяем!
+# В server.py fallback = 4545, если PORT не задан
 
 CMD ["python", "server.py"]
