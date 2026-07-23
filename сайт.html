@@ -87,21 +87,20 @@
         <!-- ========== СЕРВЕР ========== -->
         <div class="page" id="page-server">
             <div class="title">Сервер</div>
-            <div class="subtitle">Настройка подключения к бэкенду</div>
+            <div class="subtitle">Адрес бэкенда определяется автоматически. Меняйте только для локальной разработки.</div>
             <div class="card">
                 <h3>Подключение</h3>
-                <p class="mb-16"><span class="dot" id="sDot" style="background:#ff4444"></span><span id="sText">Не подключен</span></p>
-                <input type="text" id="sUrl" placeholder="http://localhost:8765">
+                <p class="mb-16"><span class="dot" id="sDot" style="background:#ff4444"></span><span id="sText">Проверка...</span></p>
+                <input type="text" id="sUrl" placeholder="https://tranquil-illumination-production-2c04.up.railway.app">
                 <div class="flex">
                     <button class="btn-white" onclick="checkServer()">Проверить</button>
                     <button class="btn-dark" onclick="saveServer()">Сохранить</button>
                 </div>
             </div>
             <div class="card">
-                <h3>Инструкция по запуску</h3>
-                <div class="step"><div class="step-num">1</div><div><p class="text-sm"><code>pip install aiohttp telethon openpyxl</code></p></div></div>
-                <div class="step"><div class="step-num">2</div><div><p class="text-sm"><code>python server.py</code></p></div></div>
-                <div class="step"><div class="step-num">3</div><div><p class="text-sm">Введите http://localhost:8765 и нажмите «Сохранить»</p></div></div>
+                <h3>Инструкция</h3>
+                <div class="step"><div class="step-num">✓</div><div><p class="text-sm">Сайт и бэкенд на одном домене — настройка не требуется</p></div></div>
+                <div class="step"><div class="step-num">💻</div><div><p class="text-sm">Для локальной разработки: <code>python server.py</code> и введите <code>http://localhost:4545</code></p></div></div>
             </div>
         </div>
 
@@ -257,7 +256,11 @@
 var DB = JSON.parse(localStorage.getItem('xpdb') || '{"accs":[],"botToken":"","botChatId":""}');
 function saveDB() { localStorage.setItem('xpdb', JSON.stringify(DB)); }
 
-function getServerUrl() { return localStorage.getItem('xpsrv') || 'http://localhost:8765'; }
+function getServerUrl() {
+    // Если сохранён свой URL (локальная разработка) — используем его.
+    // Иначе авто-определяем: тот же домен, что и сайт (Railway / любой хостинг).
+    return localStorage.getItem('xpsrv') || window.location.origin;
+}
 function setServerUrl(u) { localStorage.setItem('xpsrv', u); }
 
 // ==================== УТИЛИТЫ ====================
@@ -812,6 +815,8 @@ function downloadDobResult() {
     document.getElementById('botChatId').value = DB.botChatId || '';
     renderAccs();
     refreshAccSelects();
+    // Авто-проверка подключения к серверу
+    checkServer();
 })();
 </script>
 </body>
