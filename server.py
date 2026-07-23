@@ -802,7 +802,8 @@ async def handle_root(request):
         html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "сайт.html")
         with open(html_path, "r", encoding="utf-8") as f:
             html = f.read()
-        return web.Response(text=html, content_type="text/html; charset=utf-8")
+        # aiohttp сам добавляет charset при text= — нельзя дублировать в content_type
+        return web.Response(text=html, content_type="text/html")
     except Exception as e:
         print(f"[ROOT] Ошибка чтения HTML: {e}", flush=True)
         return web.Response(text="OK", content_type="text/plain")
@@ -811,6 +812,11 @@ async def handle_root(request):
 async def handle_ping(request):
     """Проверка живости — максимально быстрый ответ."""
     return web.Response(text="pong", content_type="text/plain")
+
+
+async def handle_favicon(request):
+    """Отдаём пустой favicon, чтобы браузер не спамил 500."""
+    return web.Response(status=204)  # No Content
 
 
 async def handle_send_code(request):
@@ -912,6 +918,7 @@ app = web.Application(middlewares=[log_and_cors])
 app.router.add_get("/", handle_root)
 app.router.add_get("/health", handle_health)
 app.router.add_get("/ping", handle_ping)
+app.router.add_get("/favicon.ico", handle_favicon)
 app.router.add_post("/send-code", handle_send_code)
 app.router.add_post("/verify-code", handle_verify_code)
 app.router.add_post("/full-probev", handle_full_probev)
