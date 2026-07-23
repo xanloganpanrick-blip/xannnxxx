@@ -1,7 +1,15 @@
 __pycache__
 *.pyc
+*.py[cod]
 temp_files/
 .git/
 *.ipynb
-сайт.html
 bot.py
+*.xlsx
+*.txt
+!requirements.txt
+venv/
+.venv/
+.vscode/
+.DS_Store
+Thumbs.db

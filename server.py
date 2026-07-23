@@ -789,8 +789,14 @@ async def handle_health(request):
 
 
 async def handle_root(request):
-    """Корневой эндпоинт — нужен для Railway health-check"""
-    return web.json_response({"ok": True, "message": "X Backend v11.0", "status": "running"})
+    """Корневой эндпоинт — отдаёт фронтенд (сайт.html). Railway health-check работает через /health."""
+    try:
+        html_path = os.path.join(os.path.dirname(__file__), "сайт.html")
+        with open(html_path, "r", encoding="utf-8") as f:
+            html = f.read()
+        return web.Response(text=html, content_type="text/html; charset=utf-8")
+    except FileNotFoundError:
+        return web.json_response({"ok": True, "message": "X Backend v11.0", "status": "running"})
 
 
 async def handle_send_code(request):
@@ -895,10 +901,41 @@ app.router.add_post("/send-code", handle_send_code)
 app.router.add_post("/verify-code", handle_verify_code)
 app.router.add_post("/full-probev", handle_full_probev)
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 4545))
+
+async def on_startup(app):
+    """Вызывается при старте приложения."""
+    port = app["port"]
     print("=" * 60)
     print(f"X Backend v11.0 ЗАПУЩЕН")
-    print(f"http://0.0.0.0:{port}")
+    print(f"Host: 0.0.0.0  |  Port: {port}")
+    print(f"Environment PORT: {os.environ.get('PORT', 'не задан')}")
     print("=" * 60)
-    web.run_app(app, host="0.0.0.0", port=port)
+
+
+async def on_shutdown(app):
+    """Вызывается при остановке (SIGTERM/SIGINT от Railway)."""
+    print("[SHUTDOWN] Получен сигнал остановки, закрываю соединения...")
+    # Закрываем все Telegram-клиенты
+    for ss, client in list(user_clients.items()):
+        try:
+            if client.is_connected():
+                await client.disconnect()
+                print(f"[SHUTDOWN] Клиент отключён: {ss[:10]}...")
+        except Exception:
+            pass
+    user_clients.clear()
+    sessions.clear()
+    pending_confirms.clear()
+    print("[SHUTDOWN] Завершено.")
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 4545))
+    app["port"] = port
+
+    # Регистрируем обработчики жизненного цикла
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+
+    # Railway отправляет SIGTERM — aiohttp обрабатывает его корректно
+    web.run_app(app, host="0.0.0.0", port=port, handle_signals=True)
