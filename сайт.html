@@ -480,11 +480,13 @@ function pickFile(e) {
             _probivHeaders = data[0];
 
             // ИЩЕМ КОЛОНКИ ПО ЗАГОЛОВКАМ — исключаем ИНН/Паспорт
-            var idxFio = -1, idxDate = -1, idxPhone = -1, idxSnils = -1, idxAddr = -1;
+            var idxFio = -1, idxDate = -1, idxPhone = -1, idxSnils = -1, idxAddr = -1, idxTableNum = -1;
             for (var k = 0; k < _probivHeaders.length; k++) {
                 var h = ('' + _probivHeaders[k]).toUpperCase().trim();
                 // ПРОПУСКАЕМ колонки ИНН и Паспорт (серия/номер) — они удаляются
                 if (h.includes('ИНН') || h.includes('ПАСПОРТ') || h.includes('INN') || h.includes('PASSPORT')) continue;
+                // № таблицы — сохраняем оригинальное значение
+                if (h.includes('№') || h === 'N' || h.includes('ТАБЛИЦ')) idxTableNum = k;
                 if (h.includes('FIO') || h.includes('ФИО') || h.includes('ИМЯ') || h.includes('ФАМИЛИЯ') || h.includes('NAME')) idxFio = k;
                 if (h.includes('ДАТА') || h.includes('BIRTH') || h.includes('РОЖД') || h.includes('DATE')) idxDate = k;
                 if (h.includes('ТЕЛЕФОН') || h.includes('PHONE') || h.includes('ТЕЛ') || (h.includes('НОМЕР') && !h.includes('ПАСПОРТ') && !h.includes('ИНН'))) idxPhone = k;
@@ -503,6 +505,7 @@ function pickFile(e) {
                 var row = data[i];
                 if (!row || row.every(function(c){ return !c; })) continue;
                 _probivRows.push({
+                    tableNum: idxTableNum >= 0 ? ('' + (row[idxTableNum] || '')) : ('' + (_probivRows.length + 1)),
                     fio: '' + (row[idxFio] || ''),
                     date: '' + (row[idxDate] || ''),
                     phone: '' + (row[idxPhone] || ''),
@@ -550,11 +553,11 @@ function renderTablePreview() {
         '<div class="stat-item"><div class="stat-num" style="color:#888">' + emptySnils + '</div><div class="stat-label">Без СНИЛС</div></div>';
 
     // Таблица (первые 50 строк)
-    var html = '<table><thead><tr><th>№</th>' + h.map(function(x){return '<th>'+x+'</th>';}).join('') + '</tr></thead><tbody>';
+    var html = '<table><thead><tr><th>№ таблицы</th>' + h.map(function(x){return '<th>'+x+'</th>';}).join('') + '</tr></thead><tbody>';
     var max = Math.min(_probivRows.length, 50);
     for (var i = 0; i < max; i++) {
         var r = _probivRows[i];
-        html += '<tr><td>' + (i+1) + '</td>';
+        html += '<tr><td>' + (r.tableNum || (i+1)) + '</td>';
         html += '<td>' + esc(r.fio) + '</td>';
         html += '<td class="' + (!r.date||r.date==='None'?'empty-cell':'') + '">' + esc(r.date||'—') + '</td>';
         html += '<td class="' + (!r.phone||r.phone==='None'?'empty-cell':'') + '">' + esc(r.phone||'—') + '</td>';
@@ -638,8 +641,9 @@ async function startProbiv() {
 
     try {
         // Формируем original_rows из ОТФИЛЬТРОВАННЫХ строк (после фильтра годов)
+        // Порядок: [tableNum, fio, date, phone, snils, addr]
         var originalRows = rows.map(function(r) {
-            return [r.fio, r.date, r.phone, r.snils, r.addr];
+            return [r.tableNum || '', r.fio, r.date, r.phone, r.snils, r.addr];
         });
 
         var resp = await apiPost('/full-probev', {

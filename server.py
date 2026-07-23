@@ -470,7 +470,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     items_no_date  — строки где нет даты, но есть ФИО+номер
     items_no_phone — строки где нет номера, но есть ФИО+дата
     items_snils    — список СНИЛС (только для строк с пустой датой!)
-    original_rows  — полные строки таблицы [fio, date, phone, snils, addr]
+    original_rows  — [tableNum, fio, date, phone, snils, addr]
     """
     client = await get_client(ss)
     log = []
@@ -496,13 +496,13 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             filtered = []
             removed_out = 0
             for row in original_rows:
-                date_str = str(row[1] if len(row) > 1 else "").strip()  # row[1] = дата
+                date_str = str(row[2] if len(row) > 2 else "").strip()  # row[2] = дата (новый формат)
                 if not date_str or date_str == 'None' or date_str == '0':
-                    filtered.append(row)  # нет даты — оставляем, будем пробивать
+                    filtered.append(row)
                     continue
                 parsed = parse_date(date_str)
                 if not parsed:
-                    filtered.append(row)  # не смогли распарсить — оставляем
+                    filtered.append(row)
                     continue
                 try:
                     year = int(parsed.split('.')[2])
@@ -526,12 +526,12 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
     for i, row in enumerate(original_rows):
         ws.append([
-            i + 1,
-            str(row[0] if len(row) > 0 else "").strip(),  # ФИО
-            str(row[1] if len(row) > 1 else "").strip(),  # Дата
-            str(row[2] if len(row) > 2 else "").strip(),  # Номер
-            str(row[3] if len(row) > 3 else "").strip(),  # СНИЛС
-            str(row[4] if len(row) > 4 else "").strip()   # Адресс
+            str(row[0] if len(row) > 0 else "").strip(),  # tableNum — ОРИГИНАЛЬНЫЙ, не трогаем!
+            str(row[1] if len(row) > 1 else "").strip(),  # ФИО
+            str(row[2] if len(row) > 2 else "").strip(),  # Дата
+            str(row[3] if len(row) > 3 else "").strip(),  # Номер
+            str(row[4] if len(row) > 4 else "").strip(),  # СНИЛС
+            str(row[5] if len(row) > 5 else "").strip()   # Адресс
         ])
     wb.save(result_file)
     add(f"Таблица создана: {ws.max_row - 1} строк")
