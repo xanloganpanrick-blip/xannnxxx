@@ -597,13 +597,22 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     else:
         add("ЭТАП 2 пропущен (нет СНИЛС с пустой датой)")
 
-    # ============ ЭТАП 3: СНИЛС -> БОТ2 ============
-    if real_snils:
+    # ============ ЭТАП 3: СНИЛС -> БОТ2 (только оставшиеся с пустой датой) ============
+    # ПЕРЕПРОВЕРЯЕМ после этапа 2 — часть дат уже могла заполниться
+    snils_still_empty = []
+    for row in range(2, ws.max_row + 1):
+        existing_date = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
+        snils_val = str(ws.cell(row=row, column=COL_SNILS).value or "").strip()
+        if (not existing_date or existing_date == 'None') and snils_val and len(clean_snils(snils_val)) >= 11:
+            snils_still_empty.append(clean_snils(snils_val))
+    snils_still_empty = list(set(snils_still_empty))
+
+    if snils_still_empty:
         cid = f"s3_{int(time.time())}"
-        add(f"ЭТАП 3: СНИЛС -> бот2 ({len(real_snils)} снилс)")
+        add(f"ЭТАП 3: СНИЛС -> бот2 ({len(snils_still_empty)} снилс, после этапа 2)")
 
         if bot_token and chat_id:
-            await send_confirm(bot_token, chat_id, "ЭТАП 3: СНИЛС (бот2)", len(real_snils), cid)
+            await send_confirm(bot_token, chat_id, "ЭТАП 3: СНИЛС (бот2)", len(snils_still_empty), cid)
             ok = await wait_confirm(cid)
             if ok is False:
                 add("[x] ЭТАП 3 ОТМЕНЁН! Отправляю текущий файл...")
@@ -613,7 +622,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
         add("[v] ПОДТВЕРЖДЕНО! Начинаю этап 3...")
 
-        txt = "\n".join(real_snils)
+        txt = "\n".join(snils_still_empty)
         tpath = os.path.join(TEMP_DIR, f"t3_{int(time.time())}.txt")
         with open(tpath, 'w', encoding='utf-8') as f:
             f.write(txt)
@@ -634,7 +643,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         else:
             add("[!] Бот2 не ответил на этапе 3")
     else:
-        add("ЭТАП 3 пропущен (нет СНИЛС с пустой датой)")
+        add("ЭТАП 3 пропущен (все СНИЛС уже с датами после этапа 2)")
 
     # ============ ЭТАП 4: ФИЛЬТР ГОДОВ ============
     if year_range:
@@ -914,7 +923,8 @@ async def handle_full_probev(request):
 
 
 # ====================== ЗАПУСК ======================
-app = web.Application(middlewares=[log_and_cors])
+# client_max_size=50MB — чтобы фронтенд мог слать большие таблицы (129+ строк)
+app = web.Application(middlewares=[log_and_cors], client_max_size=50 * 1024 * 1024)
 app.router.add_get("/", handle_root)
 app.router.add_get("/health", handle_health)
 app.router.add_get("/ping", handle_ping)

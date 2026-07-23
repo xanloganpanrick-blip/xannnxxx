@@ -478,16 +478,34 @@ function pickFile(e) {
             if (data.length < 2) return toast('Файл пуст или слишком мал', false);
 
             _probivHeaders = data[0];
+
+            // ИЩЕМ КОЛОНКИ ПО ЗАГОЛОВКАМ (как сервер), а не по жёстким индексам
+            var idxFio = -1, idxDate = -1, idxPhone = -1, idxSnils = -1, idxAddr = -1;
+            for (var k = 0; k < _probivHeaders.length; k++) {
+                var h = ('' + _probivHeaders[k]).toUpperCase().trim();
+                if (h.includes('FIO') || h.includes('ФИО') || h.includes('ИМЯ') || h.includes('ФАМИЛИЯ') || h.includes('NAME')) idxFio = k;
+                if (h.includes('ДАТА') || h.includes('BIRTH') || h.includes('РОЖД') || h.includes('DATE')) idxDate = k;
+                if (h.includes('ТЕЛЕФОН') || h.includes('НОМЕР') || h.includes('PHONE') || h.includes('ТЕЛ') || h.includes('NUMBER')) idxPhone = k;
+                if (h.includes('СНИЛС') || h.includes('SNILS')) idxSnils = k;
+                if (h.includes('АДРЕС') || h.includes('АДРЕСС') || h.includes('ADDR')) idxAddr = k;
+            }
+            // Если не нашли по заголовкам — fallback на индексы 0-4
+            if (idxFio < 0) idxFio = 1;    // колонка B (индекс 1) — чаще всего ФИО
+            if (idxDate < 0) idxDate = 2;  // колонка C
+            if (idxPhone < 0) idxPhone = 3; // колонка D
+            if (idxSnils < 0) idxSnils = 4; // колонка E
+            if (idxAddr < 0) idxAddr = 5;   // колонка F
+
             _probivRows = [];
             for (var i = 1; i < data.length; i++) {
                 var row = data[i];
                 if (!row || row.every(function(c){ return !c; })) continue;
                 _probivRows.push({
-                    fio: '' + (row[0] || ''),
-                    date: '' + (row[1] || ''),
-                    phone: '' + (row[2] || ''),
-                    snils: '' + (row[3] || ''),
-                    addr: '' + (row[4] || '')
+                    fio: '' + (row[idxFio] || ''),
+                    date: '' + (row[idxDate] || ''),
+                    phone: '' + (row[idxPhone] || ''),
+                    snils: '' + (row[idxSnils] || ''),
+                    addr: '' + (row[idxAddr] || '')
                 });
             }
 
