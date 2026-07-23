@@ -952,7 +952,7 @@ async def on_shutdown(app):
 
 
 if __name__ == "__main__":
-    import sys
+    import sys, signal as _signal
     print("[START] Инициализация...", flush=True)
     try:
         port = int(os.environ.get("PORT", 4545))
@@ -962,8 +962,52 @@ if __name__ == "__main__":
         app.on_shutdown.append(on_shutdown)
 
         print(f"[START] Запуск на 0.0.0.0:{port}...", flush=True)
-        # Без handle_signals — Docker сам пришлёт SIGTERM PID 1, aiohttp поймает через asyncio
-        web.run_app(app, host="0.0.0.0", port=port)
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        runner = web.AppRunner(app)
+        loop.run_until_complete(runner.setup())
+
+        # Вручную создаём TCP-сокет — полный контроль над binding
+        import socket as _socket
+        sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        # SO_REUSEPORT — может помочь на Railway
+        try:
+            sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEPORT, 1)
+        except (AttributeError, OSError):
+            pass
+        sock.bind(("0.0.0.0", port))
+        sock.listen(128)
+        sock.setblocking(False)
+
+        site = web.SockSite(runner, sock)
+        loop.run_until_complete(site.start())
+
+        print(f"[START] СЕРВЕР ГОТОВ — порт {port} открыт", flush=True)
+        print(f"[START] Ожидаю запросы...", flush=True)
+
+        # Явная обработка SIGTERM (Railway) и SIGINT
+        def shutdown():
+            print("[SIGNAL] Получен сигнал, останавливаю...", flush=True)
+            loop.create_task(_do_shutdown(runner, sock, loop))
+
+        async def _do_shutdown(runner, sock, loop):
+            await runner.cleanup()
+            sock.close()
+            loop.stop()
+
+        for sig in (_signal.SIGTERM, _signal.SIGINT):
+            try:
+                loop.add_signal_handler(sig, shutdown)
+            except NotImplementedError:
+                pass  # Windows
+
+        loop.run_forever()
+        loop.close()
+        print("[START] Сервер остановлен.", flush=True)
+
     except Exception as e:
         print(f"[FATAL] Ошибка запуска: {e}", flush=True)
         traceback.print_exc()

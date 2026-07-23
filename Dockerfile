@@ -21,12 +21,8 @@ COPY сайт.html .
 RUN mkdir -p temp_files && chmod 777 temp_files
 
 # Railway задаёт $PORT — server.py читает: os.environ.get("PORT", 4545)
-# Railway сам маршрутизирует трафик, порт в EXPOSE носит информационный характер
+# Railway сам маршрутизирует трафик и делает health-check на платформенном уровне
 EXPOSE 4545
-
-# Railway health-check: раз в 30 секунд стучится на localhost:$PORT/
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-4545}/ || exit 1
 
 # python -u = unbuffered output — логи сразу видны в Railway
 CMD ["python", "-u", "server.py"]
