@@ -479,13 +479,15 @@ function pickFile(e) {
 
             _probivHeaders = data[0];
 
-            // ИЩЕМ КОЛОНКИ ПО ЗАГОЛОВКАМ (как сервер), а не по жёстким индексам
+            // ИЩЕМ КОЛОНКИ ПО ЗАГОЛОВКАМ — исключаем ИНН/Паспорт
             var idxFio = -1, idxDate = -1, idxPhone = -1, idxSnils = -1, idxAddr = -1;
             for (var k = 0; k < _probivHeaders.length; k++) {
                 var h = ('' + _probivHeaders[k]).toUpperCase().trim();
+                // ПРОПУСКАЕМ колонки ИНН и Паспорт (серия/номер) — они удаляются
+                if (h.includes('ИНН') || h.includes('ПАСПОРТ') || h.includes('INN') || h.includes('PASSPORT')) continue;
                 if (h.includes('FIO') || h.includes('ФИО') || h.includes('ИМЯ') || h.includes('ФАМИЛИЯ') || h.includes('NAME')) idxFio = k;
                 if (h.includes('ДАТА') || h.includes('BIRTH') || h.includes('РОЖД') || h.includes('DATE')) idxDate = k;
-                if (h.includes('ТЕЛЕФОН') || h.includes('НОМЕР') || h.includes('PHONE') || h.includes('ТЕЛ') || h.includes('NUMBER')) idxPhone = k;
+                if (h.includes('ТЕЛЕФОН') || h.includes('PHONE') || h.includes('ТЕЛ') || (h.includes('НОМЕР') && !h.includes('ПАСПОРТ') && !h.includes('ИНН'))) idxPhone = k;
                 if (h.includes('СНИЛС') || h.includes('SNILS')) idxSnils = k;
                 if (h.includes('АДРЕС') || h.includes('АДРЕСС') || h.includes('ADDR')) idxAddr = k;
             }
@@ -588,10 +590,31 @@ async function startProbiv() {
         addLog('[!] Не настроен бот уведомлений. Настройте в разделе Аккаунты.', 'yellow');
     }
 
+    // === ФИЛЬТР ПО ГОДАМ ДО ПРОБИВА ===
+    // Удаляем строки с датой вне диапазона. Строки БЕЗ даты — ОСТАВЛЯЕМ (их будем пробивать).
+    var rows = _probivRows;
+    if (yearRange) {
+        var parts = yearRange.split('-');
+        var yf = parseInt(parts[0]), yt = parseInt(parts[1]);
+        var before = rows.length;
+        rows = rows.filter(function(r) {
+            var dateStr = parseDate(r.date);
+            if (!dateStr) return true;  // нет даты — оставляем, надо пробить
+            var year = parseInt(dateStr.split('.')[2]);
+            if (isNaN(year)) return true;  // не можем распарсить — оставляем
+            return year >= yf && year <= yt;
+        });
+        var removed = before - rows.length;
+        if (removed > 0) {
+            addLog('[ФИЛЬТР] Удалено ' + removed + ' строк с датой вне ' + yearRange, 'yellow');
+            addLog('[ФИЛЬТР] Осталось: ' + rows.length + ' строк', 'dim');
+        }
+    }
+
     // Анализ: строки без даты, без номера
     var itemsNoDate = [];
     var itemsNoPhone = [];
-    _probivRows.forEach(function(r) {
+    rows.forEach(function(r) {
         var hasDate = r.date && r.date !== 'None' && r.date !== '0';
         var hasPhone = r.phone && r.phone !== 'None' && r.phone !== '0';
         var hasFio = r.fio && r.fio !== 'None';
@@ -614,8 +637,8 @@ async function startProbiv() {
     btn.textContent = '⏳ ВЫПОЛНЯЕТСЯ...';
 
     try {
-        // Формируем original_rows в правильном порядке: [fio, date, phone, snils, addr]
-        var originalRows = _probivRows.map(function(r) {
+        // Формируем original_rows из ОТФИЛЬТРОВАННЫХ строк (после фильтра годов)
+        var originalRows = rows.map(function(r) {
             return [r.fio, r.date, r.phone, r.snils, r.addr];
         });
 

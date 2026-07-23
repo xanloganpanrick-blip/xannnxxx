@@ -271,15 +271,21 @@ def parse_xlsx(path):
         ws = wb.active
         h = {}  # ключ -> номер колонки
 
-        # Ищем заголовки в первой строке
+        # Ищем заголовки в первой строке (пропускаем ИНН/Паспорт)
         for col in range(1, ws.max_column + 1):
             v = str(ws.cell(row=1, column=col).value or "").upper().strip()
             print(f"[PARSE] Колонка {col}: '{v}'")
+            # Пропускаем колонки ИНН и Паспорт
+            if any(k in v for k in ['ИНН', 'INN', 'ПАСПОРТ', 'PASSPORT']):
+                continue
             if any(k in v for k in ['FIO', 'ФИО', 'ИМЯ', 'ФАМИЛИЯ', 'NAME']):
                 h['fio'] = col
             if any(k in v for k in ['ДАТА', 'BIRTH', 'РОЖД', 'DATE']):
                 h['date'] = col
-            if any(k in v for k in ['ТЕЛЕФОН', 'НОМЕР', 'PHONE', 'ТЕЛ', 'NUMBER']):
+            # НОМЕР — только если это НЕ паспорт и НЕ ИНН
+            if any(k in v for k in ['ТЕЛЕФОН', 'PHONE', 'ТЕЛ']):
+                h['phone'] = col
+            elif 'НОМЕР' in v and 'ПАСПОРТ' not in v and 'ИНН' not in v:
                 h['phone'] = col
             if any(k in v for k in ['СНИЛС', 'SNILS']):
                 h['snils'] = col
