@@ -797,20 +797,15 @@ async def handle_health(request):
 
 
 async def handle_root(request):
-    """Корневой эндпоинт. Отдаёт HTML браузеру, plain-text OK для health-check."""
-    # Браузер → HTML
-    accept = request.headers.get("Accept", "")
-    if "text/html" in accept:
-        try:
-            html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "сайт.html")
-            with open(html_path, "r", encoding="utf-8") as f:
-                html = f.read()
-            return web.Response(text=html, content_type="text/html; charset=utf-8")
-        except Exception as e:
-            print(f"[ROOT] Ошибка чтения HTML: {e}", flush=True)
-            return web.Response(text="OK", content_type="text/plain")
-    # Health-check / API → plain text (макс. надёжность)
-    return web.Response(text="OK", content_type="text/plain")
+    """Корневой эндпоинт — всегда отдаёт HTML (health-check всё равно нужен только 200)."""
+    try:
+        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "сайт.html")
+        with open(html_path, "r", encoding="utf-8") as f:
+            html = f.read()
+        return web.Response(text=html, content_type="text/html; charset=utf-8")
+    except Exception as e:
+        print(f"[ROOT] Ошибка чтения HTML: {e}", flush=True)
+        return web.Response(text="OK", content_type="text/plain")
 
 
 async def handle_ping(request):

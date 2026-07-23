@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Системные зависимости: gcc+libssl-dev для cryptg, curl для HEALTHCHECK
+# Системные зависимости: gcc+libssl-dev для cryptg, curl для отладки
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libssl-dev \
