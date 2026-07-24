@@ -52,6 +52,84 @@ def normalize_fio(raw):
     return ' '.join([w[0].upper() + w[1:].lower() for w in words]).upper().replace('Ё', 'Е')
 
 
+# Словарь исправлений опечаток в отчествах
+PATRONYMIC_FIXES = {
+    'ВЛАДИМИРОЕВИЧ': 'ВЛАДИМИРОВИЧ', 'ВЛАДИМИРОЕВНА': 'ВЛАДИМИРОВНА',
+    'АЛЕКСАНДРОЕВИЧ': 'АЛЕКСАНДРОВИЧ', 'АЛЕКСАНДРОЕВНА': 'АЛЕКСАНДРОВНА',
+    'АЛЕКСЕЕВИЧ': 'АЛЕКСЕЕВИЧ',  # правильно
+    'НИКОЛАЕВИЧ': 'НИКОЛАЕВИЧ',  # правильно
+    'СЕРГЕЕВИЧ': 'СЕРГЕЕВИЧ',    # правильно
+    'МИХАЙЛОЕВИЧ': 'МИХАЙЛОВИЧ', 'МИХАЙЛОЕВНА': 'МИХАЙЛОВНА',
+    'АНДРЕЕВИЧ': 'АНДРЕЕВИЧ',    # правильно
+    'ДМИТРИЕВИЧ': 'ДМИТРИЕВИЧ',  # правильно
+    'ВАЛЕРЬЕВИЧ': 'ВАЛЕРЬЕВИЧ',  # правильно
+    'АЛЕКСЕЕВНА': 'АЛЕКСЕЕВНА',  # правильно
+    'АНДРЕЕВНА': 'АНДРЕЕВНА',    # правильно
+    'СЕРГЕЕВНА': 'СЕРГЕЕВНА',    # правильно
+}
+
+# Мусорные «имена» (колонки-заголовки, placeholder'ы)
+GARBAGE_NAMES = {'ИФО', 'ФОИ', 'ОИФ', 'ФИО', 'FIO', 'ИМЯ', 'NAME', 'ФАМИЛИЯ',
+                 'ИМЯО', 'ОТЧЕСТВО', 'ФАМ', 'ИМ', 'ОТ', '-', '--', '...',
+                 'НЕТ', 'НЕТУ', 'НЕИЗВЕСТНО', 'НЕИЗВЕСТЕН', 'НЕИЗВЕСТНА',
+                 'UNKNOWN', 'NULL', 'NONE', 'NAN', 'XXX', 'ХХХ'}
+
+# Слова-маркеры для удаления (оглы/кызы и др.)
+REMOVE_MARKERS = {'ОГЛЫ', 'ОГЛИ', 'КЫЗЫ', 'КИЗИ', 'УГЛИ', 'УЛЫ', 'ГЫЗЫ'}
+
+
+def validate_and_clean_fio(raw):
+    """
+    Полная нормализация и валидация ФИО.
+    Возвращает (нормализованное_ФИО, причина_удаления).
+    Если ФИО валидно — причина_удаления = None.
+    """
+    if not raw or not str(raw).strip():
+        return "", "пустое ФИО"
+
+    # Нормализуем
+    fio = normalize_fio(raw)
+    if not fio:
+        return "", "пустое после нормализации"
+
+    parts = fio.split()
+    # Не требуем 2+ слов — «Анна» или «Анна Васильевна» тоже валидны
+
+    # Проверка на мусор
+    for part in parts:
+        if part in GARBAGE_NAMES:
+            return "", f"мусорное имя: {fio}"
+        # Одна буква — подозрительно (но 'Я' или 'И' могут быть реальными именами)
+        if len(part) == 1 and part not in ('Я', 'И', 'А', 'У', 'О', 'Е'):
+            return "", f"одна буква в ФИО: {fio}"
+
+    # Проверка на оглы/кызы
+    for part in parts:
+        if part in REMOVE_MARKERS:
+            return "", f"содержит {part}: {fio}"
+
+    # Проверка на перемешанные буквы (ифо/фои и т.п.) — только если имя подозрительно короткое
+    total_len = len(fio.replace(' ', ''))
+    if total_len <= 2 and len(parts) == 1:
+        return "", f"подозрительно короткое: {fio}"
+
+    # Исправление опечаток в отчествах
+    fixed_parts = []
+    for part in parts:
+        if part in PATRONYMIC_FIXES:
+            fixed_parts.append(PATRONYMIC_FIXES[part])
+        # Общий паттерн: ОЕВИЧ → ОВИЧ, ОЕВНА → ОВНА
+        elif 'ОЕВИЧ' in part:
+            fixed_parts.append(part.replace('ОЕВИЧ', 'ОВИЧ'))
+        elif 'ОЕВНА' in part:
+            fixed_parts.append(part.replace('ОЕВНА', 'ОВНА'))
+        else:
+            fixed_parts.append(part)
+
+    fio = ' '.join(fixed_parts)
+    return fio, None
+
+
 def clean_phone(text):
     """Очищает телефон до формата +7XXXXXXXXXX (10 цифр после +7)"""
     if not text:
@@ -542,6 +620,28 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         except Exception as e:
             add(f"[ПРЕД-ФИЛЬТР] Ошибка: {e}")
 
+    # === НОРМАЛИЗАЦИЯ ФИО: удаление оглы/кызы, мусора, исправление опечаток ===
+    removed_fio = 0
+    fixed_typos = 0
+    cleaned_rows = []
+    for row in original_rows:
+        fio_raw = str(row[1] if len(row) > 1 else "")  # row[1] = ФИО
+        clean_fio, reason = validate_and_clean_fio(fio_raw)
+        if reason:
+            removed_fio += 1
+            add(f"[ФИО] Удалена строка №{row[0]}: {reason}")
+            continue
+        if clean_fio != normalize_fio(fio_raw):
+            fixed_typos += 1
+            # Обновляем ФИО в строке
+            row_list = list(row)
+            row_list[1] = clean_fio
+            cleaned_rows.append(tuple(row_list))
+        else:
+            cleaned_rows.append(row)
+    original_rows = cleaned_rows
+    add(f"[ФИО] Нормализация: удалено {removed_fio} строк (оглы/кызы/мусор), исправлено опечаток: {fixed_typos}")
+
     # === СОЗДАЕМ ИТОГОВУЮ ТАБЛИЦУ ===
     result_file = os.path.join(TEMP_DIR, f"result_{int(time.time())}.xlsx")
     wb = Workbook()
@@ -758,12 +858,26 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         add("ЭТАП 4 пропущен (не задан диапазон годов)")
 
     # ============ ЭТАП 5: ФИО+ДАТА -> БОТ1 (заполняем номера) ============
-    if items_no_phone:
+    # ПЕРЕСЧИТЫВАЕМ строки без номера — таблица изменилась после этапов 1-4!
+    items_no_phone_fresh = []
+    for row in range(2, ws.max_row + 1):
+        fio_val = str(ws.cell(row=row, column=COL_FIO).value or "").strip()
+        date_val = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
+        phone_val = str(ws.cell(row=row, column=COL_PHONE).value or "").strip()
+        if (fio_val and fio_val != 'None'
+                and date_val and date_val != 'None' and date_val != '0'
+                and (not phone_val or phone_val == 'None' or phone_val == '0')):
+            items_no_phone_fresh.append({
+                'fio': normalize_fio(fio_val),
+                'date': date_val
+            })
+
+    if items_no_phone_fresh:
         cid = f"s5_{int(time.time())}"
-        add(f"ЭТАП 5: ФИО+ДАТА -> бот1 ({len(items_no_phone)} строк)")
+        add(f"ЭТАП 5: ФИО+ДАТА -> бот1 ({len(items_no_phone_fresh)} строк, было {len(items_no_phone)} до обработки)")
 
         if bot_token and chat_id:
-            ok = await safe_confirm(bot_token, chat_id, "ЭТАП 5: ФИО+ДАТА (пустые номера)", len(items_no_phone), cid, add)
+            ok = await safe_confirm(bot_token, chat_id, "ЭТАП 5: ФИО+ДАТА (пустые номера)", len(items_no_phone_fresh), cid, add)
             if ok is False:
                 add("[x] ЭТАП 5 ОТМЕНЁН! Отправляю текущий файл...")
                 wb.save(result_file)
@@ -772,7 +886,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
         add("[v] ПОДТВЕРЖДЕНО! Начинаю этап 5...")
 
-        txt = "\n".join([f"{it.get('fio','')}\t{it.get('date','')}" for it in items_no_phone])
+        txt = "\n".join([f"{it.get('fio','')}\t{it.get('date','')}" for it in items_no_phone_fresh])
         tpath = os.path.join(TEMP_DIR, f"t5_{int(time.time())}.txt")
         with open(tpath, 'w', encoding='utf-8') as f:
             f.write(txt)
@@ -805,12 +919,26 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         add("ЭТАП 5 пропущен (нет строк без номера)")
 
     # ============ ЭТАП 6: ДОБИВ -> БОТ2 ============
-    if items_no_phone:
+    # ПЕРЕСЧИТЫВАЕМ после этапа 5 — часть номеров уже заполнена!
+    items_no_phone_final = []
+    for row in range(2, ws.max_row + 1):
+        fio_val = str(ws.cell(row=row, column=COL_FIO).value or "").strip()
+        date_val = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
+        phone_val = str(ws.cell(row=row, column=COL_PHONE).value or "").strip()
+        if (fio_val and fio_val != 'None'
+                and date_val and date_val != 'None' and date_val != '0'
+                and (not phone_val or phone_val == 'None' or phone_val == '0')):
+            items_no_phone_final.append({
+                'fio': normalize_fio(fio_val),
+                'date': date_val
+            })
+
+    if items_no_phone_final:
         cid = f"s6_{int(time.time())}"
-        add(f"ЭТАП 6: ДОБИВ -> бот2 ({len(items_no_phone)} строк)")
+        add(f"ЭТАП 6: ДОБИВ -> бот2 ({len(items_no_phone_final)} строк, было {len(items_no_phone_fresh)} до этапа 5)")
 
         if bot_token and chat_id:
-            ok = await safe_confirm(bot_token, chat_id, "ЭТАП 6: ДОБИВ (бот2)", len(items_no_phone), cid, add)
+            ok = await safe_confirm(bot_token, chat_id, "ЭТАП 6: ДОБИВ (бот2)", len(items_no_phone_final), cid, add)
             if ok is False:
                 add("[x] ЭТАП 6 ОТМЕНЁН! Отправляю текущий файл...")
                 wb.save(result_file)
@@ -820,7 +948,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         add("[v] ПОДТВЕРЖДЕНО! Добиваю номера через бот2...")
 
         e = await client.get_entity(bot2)
-        for i, it in enumerate(items_no_phone):
+        for i, it in enumerate(items_no_phone_final):
             try:
                 fio = it.get('fio', '')
                 date = it.get('date', '')
