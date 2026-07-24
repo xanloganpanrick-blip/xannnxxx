@@ -46,6 +46,7 @@ user_clients = {}
 TEMP_DIR = "temp_files"
 os.makedirs(TEMP_DIR, exist_ok=True)
 pending_confirms = {}
+pending_web_confirms = {}  # {confirm_id: {stage, count, status, timestamp, session_hint}}
 active_probevs = {}
 probev_lock = asyncio.Lock()
 stop_requested = False
@@ -601,42 +602,84 @@ async def poll_updates_with_buttons(bot_token, chat_id, confirm_id, topic_id=Non
 
 
 async def safe_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, add_log, topic_id=None):
+    """Единая система подтверждений: сначала сайт (5 мин), потом бот.
+    Возвращает: 'confirm', 'skip', 'stop', или 'again'."""
     global stop_requested
     
     if stop_requested:
         add_log("[x] Остановка запрошена")
         return "stop"
     
-    if not bot_token or not chat_id:
-        add_log("[v] Бот не настроен - продолжаю автоматически")
-        return "confirm"
-
-    while True:
-        sent = await send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, topic_id)
-        if not sent:
-            add_log("[!] Не удалось отправить в бот - повтор через 5с...")
-            await asyncio.sleep(5)
-            continue
-
-        add_log(f"[ОЖИДАНИЕ] Откройте бот для: {stage_name}")
-        
-        while True:
-            if confirm_id in pending_confirms:
-                r = pending_confirms.pop(confirm_id)
-                if r == "stop":
+    # === ЭТАП 1: ждём подтверждения с сайта (до 5 минут) ===
+    pending_web_confirms[confirm_id] = {
+        "stage": stage_name,
+        "count": count,
+        "status": "waiting",
+        "timestamp": time.time(),
+        "result": None
+    }
+    add_log(f"[ОЖИДАНИЕ] {stage_name} — подтвердите на сайте или в боте")
+    
+    web_deadline = time.time() + 300  # 5 минут на ответ с сайта
+    
+    while time.time() < web_deadline:
+        if confirm_id in pending_web_confirms:
+            result = pending_web_confirms[confirm_id].get("result")
+            if result:
+                pending_web_confirms.pop(confirm_id, None)
+                if result == "stop":
                     stop_requested = True
-                    add_log("[x] ОСТАНОВКА ВСЕХ ПРОЦЕССОВ")
+                    add_log("[x] ОСТАНОВКА ВСЕХ ПРОЦЕССОВ (с сайта)")
                     return "stop"
-                if r == "skip":
-                    add_log(f"[v] ПРОПУЩЕН: {stage_name}")
-                    return "skip"
-                if r == "confirm":
-                    add_log(f"[v] ПОДТВЕРЖДЕНО: {stage_name}")
-                    return "confirm"
-                if r == "again":
-                    add_log(f"[v] ЕЩЁ РАЗ - повтор для: {stage_name}")
-                    break
-            await asyncio.sleep(0.5)
+                add_log(f"[v] САЙТ: {result} — {stage_name}")
+                return result
+        
+        # Проверяем бот (на случай если пользователь ответил через бот)
+        if confirm_id in pending_confirms:
+            r = pending_confirms.pop(confirm_id)
+            pending_web_confirms.pop(confirm_id, None)
+            if r == "stop":
+                stop_requested = True
+                add_log("[x] ОСТАНОВКА (из бота)")
+                return "stop"
+            add_log(f"[v] БОТ: {r} — {stage_name}")
+            return r
+        
+        await asyncio.sleep(1)
+    
+    # === ЭТАП 2: если сайт не ответил — отправляем в бот ===
+    if bot_token and chat_id:
+        add_log(f"[БОТ] Сайт не ответил, отправляю в бот: {stage_name}")
+        sent = await send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, topic_id)
+        if sent:
+            # Ждём ответа из бота
+            bot_deadline = time.time() + 600  # 10 минут
+            while time.time() < bot_deadline:
+                if confirm_id in pending_confirms:
+                    r = pending_confirms.pop(confirm_id)
+                    pending_web_confirms.pop(confirm_id, None)
+                    if r == "stop":
+                        stop_requested = True
+                        add_log("[x] ОСТАНОВКА (из бота)")
+                        return "stop"
+                    add_log(f"[v] БОТ: {r} — {stage_name}")
+                    return r
+                # Проверяем сайт (вдруг ответил позже)
+                if confirm_id in pending_web_confirms:
+                    result = pending_web_confirms[confirm_id].get("result")
+                    if result:
+                        pending_web_confirms.pop(confirm_id, None)
+                        if result == "stop":
+                            stop_requested = True
+                            return "stop"
+                        add_log(f"[v] САЙТ: {result} — {stage_name}")
+                        return result
+                await asyncio.sleep(1)
+    
+    # === Таймаут: авто-продолжаем ===
+    pending_web_confirms.pop(confirm_id, None)
+    add_log(f"[v] Таймаут подтверждения — продолжаю автоматически: {stage_name}")
+    return "confirm"
 
 
 async def send_file_to_bot(bot_token, chat_id, filepath, caption="", topic_id=None):
@@ -2618,6 +2661,57 @@ async def handle_download_file(request):
     return web.FileResponse(filepath)
 
 
+# ====================== ПОДТВЕРЖДЕНИЯ С САЙТА ======================
+async def handle_pending_confirm(request):
+    """Возвращает текущее ожидающее подтверждение (для опроса с сайта)"""
+    if not pending_web_confirms:
+        return web.json_response({"ok": True, "pending": None})
+    
+    # Находим самое старое ожидающее подтверждение
+    oldest = None
+    for cid, data in pending_web_confirms.items():
+        if data.get("result") is None:  # ещё не отвечено
+            if oldest is None or data["timestamp"] < oldest[1]["timestamp"]:
+                oldest = (cid, data)
+    
+    if oldest:
+        return web.json_response({
+            "ok": True,
+            "pending": {
+                "confirm_id": oldest[0],
+                "stage": oldest[1]["stage"],
+                "count": oldest[1]["count"],
+                "elapsed": int(time.time() - oldest[1]["timestamp"])
+            }
+        })
+    
+    return web.json_response({"ok": True, "pending": None})
+
+
+async def handle_confirm_action(request):
+    """Ответ на подтверждение с сайта: confirm, skip, stop, again"""
+    try:
+        d = await request.json()
+        confirm_id = d.get("confirm_id", "")
+        action = d.get("action", "confirm")  # confirm, skip, stop, again
+        
+        if not confirm_id:
+            return web.json_response({"ok": False, "error": "Нет confirm_id"}, status=400)
+        
+        if confirm_id in pending_web_confirms:
+            pending_web_confirms[confirm_id]["result"] = action
+            return web.json_response({"ok": True, "message": f"Действие {action} принято"})
+        
+        # Может быть уже в pending_confirms (бот)
+        if confirm_id in pending_confirms:
+            pending_confirms[confirm_id] = action
+            return web.json_response({"ok": True, "message": f"Действие {action} принято (бот)"})
+        
+        return web.json_response({"ok": False, "error": "Подтверждение не найдено (устарело?)"}, status=404)
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+
+
 # ====================== ПАУЗА / РЕЗЮМЕ ======================
 async def handle_pause(request):
     global pause_requested
@@ -3097,6 +3191,8 @@ app.router.add_post("/full-probev", handle_full_probev)
 app.router.add_post("/stop", handle_stop)
 app.router.add_post("/pause", handle_pause)
 app.router.add_post("/resume", handle_resume)
+app.router.add_get("/pending-confirm", handle_pending_confirm)
+app.router.add_post("/confirm-action", handle_confirm_action)
 app.router.add_post("/finish-session", handle_finish_session)
 app.router.add_post("/normalize-addresses", handle_normalize_addresses)
 app.router.add_post("/fill-max", handle_fill_max)

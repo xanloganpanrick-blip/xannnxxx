@@ -266,6 +266,22 @@
                 </div>
             </div>
 
+            <!-- ПЛАШКА: Подтверждение действий -->
+            <div class="card" id="confirmCard" style="display:none; border-color: #ffaa00;">
+                <div class="flex-between">
+                    <div>
+                        <h3 id="confirmStage" style="color:#ffaa00;">Ожидание подтверждения...</h3>
+                        <p class="text-sm" id="confirmCount"></p>
+                        <p class="text-xs dim" id="confirmTimer"></p>
+                    </div>
+                    <div class="flex">
+                        <button class="btn-green" onclick="confirmAction('confirm')">✓ ПОДТВЕРДИТЬ</button>
+                        <button class="btn-yellow" onclick="confirmAction('skip')">→ ПРОПУСТИТЬ</button>
+                        <button class="btn-red" onclick="confirmAction('stop')">✕ СТОП</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- ПЛАШКА: Завершение сессии (3 шага) -->
             <div class="card" id="sessionCard" style="display:none;">
                 <h3>Завершение сессии</h3>
@@ -1176,6 +1192,59 @@ function downloadCheckTxt() {
     document.getElementById('stepEnd2').style.display = 'block';
 }
 
+// ==================== ПОДТВЕРЖДЕНИЯ НА САЙТЕ ====================
+var _confirmPollInterval = null;
+var _currentConfirmId = null;
+
+function startConfirmPolling() {
+    if (_confirmPollInterval) return;
+    document.getElementById('confirmCard').style.display = 'none';
+    _confirmPollInterval = setInterval(pollConfirm, 2000);
+}
+
+function stopConfirmPolling() {
+    if (_confirmPollInterval) {
+        clearInterval(_confirmPollInterval);
+        _confirmPollInterval = null;
+    }
+    document.getElementById('confirmCard').style.display = 'none';
+    _currentConfirmId = null;
+}
+
+async function pollConfirm() {
+    if (!isProbevRunning) { stopConfirmPolling(); return; }
+    try {
+        var resp = await apiPost('/pending-confirm', {});
+        if (resp.ok && resp.pending) {
+            _currentConfirmId = resp.pending.confirm_id;
+            document.getElementById('confirmCard').style.display = 'block';
+            document.getElementById('confirmStage').textContent = resp.pending.stage;
+            document.getElementById('confirmCount').textContent = 'Строк: ' + resp.pending.count;
+            var mins = Math.floor(resp.pending.elapsed / 60);
+            var secs = resp.pending.elapsed % 60;
+            document.getElementById('confirmTimer').textContent = 'Ожидает: ' + mins + 'м ' + secs + 'с (авто через 5 мин)';
+        } else {
+            document.getElementById('confirmCard').style.display = 'none';
+            _currentConfirmId = null;
+        }
+    } catch(e) {}
+}
+
+async function confirmAction(action) {
+    if (!_currentConfirmId) return;
+    try {
+        var resp = await apiPost('/confirm-action', { confirm_id: _currentConfirmId, action: action });
+        if (resp.ok) {
+            document.getElementById('confirmCard').style.display = 'none';
+            _currentConfirmId = null;
+            var labels = {confirm: 'ПОДТВЕРЖДЕНО', skip: 'ПРОПУЩЕНО', stop: 'ОСТАНОВЛЕНО'};
+            addLog('[САЙТ] ' + (labels[action] || action), action === 'stop' ? 'err' : 'ok');
+        }
+    } catch(e) {
+        toast('Ошибка: ' + e.message, false);
+    }
+}
+
 async function startProbiv() {
     var btn = document.getElementById('btnProbiv');
     var stopBtn = document.getElementById('btnStopProbiv');
@@ -1199,6 +1268,7 @@ async function startProbiv() {
     btn.textContent = 'ВЫПОЛНЯЕТСЯ...';
     stopBtn.disabled = false;
     document.getElementById('btnFinishSession').disabled = true;
+    startConfirmPolling();
     
     var bot1 = document.getElementById('bot1').value.trim() || '@osint_pam_pam_bot';
     var bot2 = document.getElementById('bot2').value.trim() || '@proverim123_bot';
@@ -1299,6 +1369,7 @@ async function startProbiv() {
     btn.disabled = false;
     btn.textContent = 'ЗАПУСТИТЬ ПРОБИВ';
     stopBtn.disabled = true;
+    stopConfirmPolling();
 }
 
 async function stopProbiv() {
@@ -1306,6 +1377,7 @@ async function stopProbiv() {
         var srv = getServerUrl();
         await fetch(srv + '/stop', {method: 'POST'});
         addLog('[СТОП] Остановка запрошена', 'warn');
+        stopConfirmPolling();
         toast('Остановка запрошена', true);
     } catch(e) {
         toast('Ошибка: ' + e.message, false);
