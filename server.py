@@ -1,4 +1,4 @@
-# server.py - X Backend v18.0 (ПЕРЕРАБОТКА: построчный пробив, TXT-подход, облако, регистрация)
+# server.py - X Backend v19.0 (Telegram как БД: группы=папки, сообщения=файлы, без USER_DB)
 # Установка: pip install aiohttp telethon openpyxl
 # Запуск: python server.py
 # Порт: 8765
@@ -2693,12 +2693,45 @@ async def handle_fill_max(request):
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
-# ====================== РЕГИСТРАЦИЯ / ВХОД ======================
-# Хранилище пользователей: {login: {password, group_id, topic_id, ss}}
-USER_DB = {}  # In-memory; в production нужно персистентное хранение
+# ====================== РЕГИСТРАЦИЯ / ВХОД (Telegram = БД) ======================
+# Никакого USER_DB! Все данные — в группах Telegram аккаунта.
+# Логин/пароль ищется сканированием ВСЕХ групп/диалогов аккаунта.
+
+async def _find_login_in_account(client, login, password):
+    """Сканирует все диалоги аккаунта в поисках сообщения с LOGIN: + PASSWORD:"""
+    dialogs = await client.get_dialogs()
+    
+    for dialog in dialogs:
+        try:
+            async for msg in client.iter_messages(dialog.entity, limit=100):
+                if not msg or not msg.text:
+                    continue
+                if "LOGIN:" not in msg.text:
+                    continue
+                
+                found_login = re.search(r'LOGIN:\s*(\S+)', msg.text)
+                found_password = re.search(r'PASSWORD:\s*(\S+)', msg.text)
+                
+                if found_login and found_password:
+                    if found_login.group(1).strip() == login.strip() and found_password.group(1).strip() == password.strip():
+                        # Определяем ID группы/диалога
+                        if hasattr(dialog, 'entity') and hasattr(dialog.entity, 'id'):
+                            gid = str(dialog.entity.id)
+                        else:
+                            gid = str(dialog.id) if hasattr(dialog, 'id') else "0"
+                        return {
+                            "group_id": gid,
+                            "group_name": dialog.name or "Без названия",
+                            "is_group": dialog.is_group
+                        }
+        except Exception:
+            continue
+    
+    return None
+
 
 async def handle_register(request):
-    """Регистрация: создаёт группу с темами, пишет логин/пароль"""
+    """Регистрация: создаёт новую группу, пишет туда LOGIN + PASSWORD. Группа = домашняя папка."""
     try:
         d = await request.json()
         ss = d.get("session", "")
@@ -2708,77 +2741,58 @@ async def handle_register(request):
         if not ss or not login or not password:
             return web.json_response({"ok": False, "error": "Заполните все поля"}, status=400)
         
-        if login in USER_DB:
-            return web.json_response({"ok": False, "error": "Логин занят"}, status=409)
-        
         client = await get_client(ss)
         me = await client.get_me()
         
-        group_id = None
+        # Проверяем: нет ли уже такого логина в группах аккаунта
+        existing = await _find_login_in_account(client, login, password)
+        if existing:
+            return web.json_response({
+                "ok": True,
+                "message": "Вы уже зарегистрированы!",
+                "group_id": existing["group_id"],
+                "group_name": existing["group_name"],
+                "already_exists": True
+            })
         
-        # Способ 1: CreateChatRequest (если доступен)
+        # Создаём группу (новую «папку»)
+        group_id = None
+        group_title = f"🏠 {login}"
+        
+        # Способ 1: через CreateChatRequest
         if CreateChatRequest is not None:
             try:
                 result = await client(CreateChatRequest(
                     users=[me.id],
-                    title=f"X Cloud - {login}"
+                    title=group_title
                 ))
                 group_id = str(-result.chats[0].id)
-                
-                # Пробуем мигрировать в супергруппу и включить темы
-                if MigrateChatRequest is not None:
-                    try:
-                        migrate = await client(MigrateChatRequest(chat_id=result.chats[0].id))
-                        group_id = f"-100{migrate.updates[1].message.peer_id.channel_id}"
-                        if EditForumRequest is not None:
-                            try:
-                                await client(EditForumRequest(
-                                    channel=migrate.updates[1].message.peer_id.channel_id,
-                                    enabled=True
-                                ))
-                            except Exception:
-                                pass  # Темы не обязательны
-                    except Exception:
-                        pass  # Миграция не обязательна
             except Exception as e:
-                print(f"[REGISTER] CreateChatRequest ошибка: {e}")
+                print(f"[REGISTER] CreateChatRequest: {e}")
         
-        # Способ 2: если CreateChatRequest не сработал — создаём через диалог с самим собой
+        # Способ 2: если не вышло — пишем в Saved Messages и создаём группу позже
         if not group_id:
             try:
-                # Создаём чат через send_message себе (создаст Saved Messages-like диалог)
-                await client.send_message('me', f"CLOUD GROUP: X Cloud - {login}\nLOGIN: {login}\nPASSWORD: {password}")
-                # Ищем последний созданный диалог
-                dialogs = await client.get_dialogs()
-                for d in dialogs:
-                    if d.name and login in d.name:
-                        group_id = str(-d.id) if hasattr(d, 'id') else str(d.id)
-                        break
-                if not group_id:
-                    # Fallback: используем "Saved Messages" как хранилище
-                    group_id = "me"
+                # Просто шлём себе логин/пароль — группа будет создана при первом входе
+                await client.send_message('me', f"LOGIN: {login}\nPASSWORD: {password}\n---\nНе удаляйте!")
+                group_id = "me"
             except Exception as e:
-                print(f"[REGISTER] Fallback ошибка: {e}")
-                return web.json_response({"ok": False, "error": f"Не удалось создать группу: {e}"}, status=500)
+                print(f"[REGISTER] Fallback: {e}")
+                return web.json_response({"ok": False, "error": f"Не удалось: {e}"}, status=500)
         
-        # Отправляем сообщение с логином и паролем
-        try:
-            entity = await client.get_entity(int(group_id)) if group_id != "me" else "me"
-            await client.send_message(entity, f"LOGIN: {login}\nPASSWORD: {password}\n---\nНе удаляйте это сообщение!")
-        except Exception:
-            pass  # Сообщение не критично
-        
-        USER_DB[login] = {
-            "password": password,
-            "group_id": group_id,
-            "topic_id": None,
-            "ss": ss
-        }
+        # Пишем логин/пароль в новую группу
+        if group_id != "me":
+            try:
+                entity = await client.get_entity(int(group_id))
+                await client.send_message(entity, f"LOGIN: {login}\nPASSWORD: {password}\n---\nНе удаляйте это сообщение!")
+            except Exception:
+                pass
         
         return web.json_response({
             "ok": True,
-            "message": "Группа создана",
-            "group_id": group_id
+            "message": "Группа создана!",
+            "group_id": group_id,
+            "group_name": group_title
         })
     except Exception as e:
         traceback.print_exc()
@@ -2786,7 +2800,7 @@ async def handle_register(request):
 
 
 async def handle_login(request):
-    """Вход: ищет по всем группам логин и сверяет пароль"""
+    """Вход: сканирует ВСЕ группы/диалоги аккаунта, ищет LOGIN + PASSWORD."""
     try:
         d = await request.json()
         ss = d.get("session", "")
@@ -2796,43 +2810,16 @@ async def handle_login(request):
         if not ss or not login or not password:
             return web.json_response({"ok": False, "error": "Заполните все поля"}, status=400)
         
-        # Сначала проверяем локальную БД
-        if login in USER_DB and USER_DB[login]["password"] == password:
+        client = await get_client(ss)
+        result = await _find_login_in_account(client, login, password)
+        
+        if result:
             return web.json_response({
                 "ok": True,
-                "message": "Вход выполнен",
-                "group_id": USER_DB[login]["group_id"],
-                "ss": USER_DB[login]["ss"]
+                "message": f"Вход выполнен! Группа: {result['group_name']}",
+                "group_id": result["group_id"],
+                "group_name": result["group_name"]
             })
-        
-        # Ищем в группах аккаунта
-        client = await get_client(ss)
-        dialogs = await client.get_dialogs()
-        
-        for dialog in dialogs:
-            if not dialog.is_group:
-                continue
-            try:
-                async for msg in client.iter_messages(dialog.entity, limit=50):
-                    if msg.text and "LOGIN:" in msg.text:
-                        found_login = re.search(r'LOGIN:\s*(\S+)', msg.text)
-                        found_password = re.search(r'PASSWORD:\s*(\S+)', msg.text)
-                        if found_login and found_password:
-                            if found_login.group(1) == login and found_password.group(1) == password:
-                                group_id = str(-dialog.entity.id) if hasattr(dialog.entity, 'id') else str(dialog.id)
-                                USER_DB[login] = {
-                                    "password": password,
-                                    "group_id": group_id,
-                                    "topic_id": None,
-                                    "ss": ss
-                                }
-                                return web.json_response({
-                                    "ok": True,
-                                    "message": "Вход выполнен (найдено в группе)",
-                                    "group_id": group_id
-                                })
-            except:
-                continue
         
         return web.json_response({"ok": False, "error": "Неверный логин или пароль"}, status=401)
     except Exception as e:
@@ -2840,16 +2827,71 @@ async def handle_login(request):
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
-# ====================== ОБЛАЧНОЕ ХРАНИЛИЩЕ ======================
-CLOUD_TRASH = {}  # {path: deleted_at_timestamp}
+# ====================== ОБЛАКО (Telegram = БД) ======================
+# Корень облака = ВСЕ группы/диалоги аккаунта
+# Внутри группы = файлы (сообщения с документами)
+# «Папка» = группа в Telegram
+# «Файл» = сообщение с документом в группе
+
+async def handle_cloud_list_root(request):
+    """Корень облака: показывает ВСЕ группы/диалоги аккаунта как «папки»."""
+    try:
+        d = await request.json()
+        ss = d.get("session", "")
+        
+        if not ss:
+            return web.json_response({"ok": False, "error": "Нет сессии"}, status=400)
+        
+        client = await get_client(ss)
+        dialogs = await client.get_dialogs()
+        
+        groups = []
+        for dialog in dialogs:
+            gid = str(dialog.entity.id) if hasattr(dialog, 'entity') and hasattr(dialog.entity, 'id') else str(dialog.id)
+            name = dialog.name or "Без названия"
+            
+            # Определяем тип
+            if dialog.is_group:
+                dtype = "group"
+            elif dialog.is_channel:
+                dtype = "channel"
+            else:
+                dtype = "chat"
+            
+            # Проверяем, есть ли в этой группе LOGIN (домашняя группа)
+            is_home = False
+            try:
+                async for msg in client.iter_messages(dialog.entity, limit=10):
+                    if msg and msg.text and "LOGIN:" in msg.text:
+                        is_home = True
+                        break
+            except:
+                pass
+            
+            groups.append({
+                "id": gid,
+                "name": name,
+                "type": dtype,
+                "is_home": is_home,
+                "unread": getattr(dialog, 'unread_count', 0) or 0
+            })
+        
+        # Сортируем: сначала домашняя, потом группы, потом каналы, потом чаты
+        type_order = {"group": 1, "channel": 2, "chat": 3}
+        groups.sort(key=lambda g: (0 if g["is_home"] else 1, type_order.get(g["type"], 9), g["name"].lower()))
+        
+        return web.json_response({"ok": True, "groups": groups, "count": len(groups)})
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
 
 async def handle_cloud_list(request):
-    """Список файлов/папок в облаке"""
+    """Содержимое «папки» (группы): все файлы-сообщения."""
     try:
         d = await request.json()
         ss = d.get("session", "")
         group_id = d.get("group_id", "")
-        path = d.get("path", "")  # Путь вида "Папка1/Подпапка2"
         
         if not ss or not group_id:
             return web.json_response({"ok": False, "error": "Нет сессии или группы"}, status=400)
@@ -2857,98 +2899,65 @@ async def handle_cloud_list(request):
         client = await get_client(ss)
         entity = await client.get_entity(int(group_id))
         
-        # Структура: папки = темы, файлы = сообщения в теме
         items = []
-        seen_folders = set()
-        seen_files = set()
+        seen = set()
         
-        if not path:
-            # Корень: показываем все темы (папки)
-            async for msg in client.iter_messages(entity, limit=200):
-                if msg.text and msg.text.startswith("LOGIN:"):
-                    continue  # Пропускаем сообщение с логином
-                
-                # Определяем папку по message_thread_id или по тексту
-                folder = None
-                if hasattr(msg, 'reply_to') and msg.reply_to:
-                    folder = f"topic_{msg.reply_to.reply_to_top_id}"
-                elif msg.text and "FOLDER:" in msg.text:
-                    folder = re.search(r'FOLDER:\s*(\S+)', msg.text)
-                    if folder:
-                        folder = folder.group(1)
-                
-                if msg.document:
-                    for attr in msg.document.attributes:
-                        if isinstance(attr, DocumentAttributeFilename):
-                            name = attr.file_name
-                            if name not in seen_files:
-                                seen_files.add(name)
-                                items.append({
-                                    "name": name,
-                                    "type": "file",
-                                    "size": msg.document.size,
-                                    "date": msg.date.isoformat() if msg.date else None,
-                                    "msg_id": msg.id,
-                                    "path": path,
-                                    "in_trash": check_trash(path, name)
-                                })
-                            break
-        else:
-            # Внутри папки: ищем файлы с префиксом подпапки
-            path_prefix = path.replace('/', ' - ')
-            async for msg in client.iter_messages(entity, limit=500):
-                if not msg.document:
-                    continue
+        async for msg in client.iter_messages(entity, limit=200):
+            # Пропускаем служебные сообщения
+            if msg.text and "LOGIN:" in msg.text:
+                continue
+            
+            if msg.document:
                 for attr in msg.document.attributes:
                     if isinstance(attr, DocumentAttributeFilename):
                         name = attr.file_name
-                        caption = msg.text or ""
-                        
-                        # Проверяем принадлежность к пути
-                        if path_prefix in caption or path_prefix in name:
-                            display_name = name
-                            if name not in seen_files:
-                                seen_files.add(name)
-                                items.append({
-                                    "name": display_name,
-                                    "type": "file",
-                                    "size": msg.document.size,
-                                    "date": msg.date.isoformat() if msg.date else None,
-                                    "msg_id": msg.id,
-                                    "path": path,
-                                    "in_trash": check_trash(path, name)
-                                })
+                        if name not in seen:
+                            seen.add(name)
+                            items.append({
+                                "name": name,
+                                "type": "file",
+                                "size": msg.document.size or 0,
+                                "date": msg.date.isoformat() if msg.date else None,
+                                "msg_id": msg.id
+                            })
                         break
+            elif msg.photo:
+                photo_id = str(msg.photo.id) if hasattr(msg.photo, 'id') else str(msg.id)
+                if photo_id not in seen:
+                    seen.add(photo_id)
+                    items.append({
+                        "name": f"photo_{msg.id}.jpg",
+                        "type": "photo",
+                        "size": sum(getattr(msg.photo.sizes[-1], 'size', 0) for _ in [1]) if hasattr(msg.photo, 'sizes') and msg.photo.sizes else 0,
+                        "date": msg.date.isoformat() if msg.date else None,
+                        "msg_id": msg.id
+                    })
         
-        return web.json_response({"ok": True, "items": items})
+        # Имя группы
+        group_name = getattr(entity, 'title', None) or f"Группа {group_id}"
+        
+        return web.json_response({
+            "ok": True,
+            "items": items,
+            "group_name": group_name,
+            "group_id": group_id,
+            "count": len(items)
+        })
     except Exception as e:
         traceback.print_exc()
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
-def check_trash(path, name):
-    key = f"{path}/{name}" if path else name
-    if key in CLOUD_TRASH:
-        deleted_at = CLOUD_TRASH[key]
-        # Храним в корзине 30 дней
-        if time.time() - deleted_at < 30 * 24 * 3600:
-            return True
-        else:
-            del CLOUD_TRASH[key]
-    return False
-
-
 async def handle_cloud_upload(request):
-    """Загрузка файла в облако"""
+    """Загрузка файла в группу (папку)."""
     try:
         reader = await request.multipart()
         
-        # Читаем метаданные
         ss = None
         group_id = None
-        path = ""
         file_data = None
-        filename = ""
+        filename = "file"
+        caption = ""
         
         while True:
             field = await reader.next()
@@ -2958,8 +2967,8 @@ async def handle_cloud_upload(request):
                 ss = (await field.read()).decode()
             elif field.name == 'group_id':
                 group_id = (await field.read()).decode()
-            elif field.name == 'path':
-                path = (await field.read()).decode()
+            elif field.name == 'caption':
+                caption = (await field.read()).decode()
             elif field.name == 'file':
                 file_data = await field.read()
                 filename = field.filename or "file"
@@ -2970,99 +2979,27 @@ async def handle_cloud_upload(request):
         client = await get_client(ss)
         entity = await client.get_entity(int(group_id))
         
-        # Сохраняем файл временно
-        tmp_path = os.path.join(TEMP_DIR, f"cloud_{int(time.time())}_{filename}")
+        # Сохраняем временно
+        tmp_path = os.path.join(TEMP_DIR, f"up_{int(time.time())}_{filename}")
         with open(tmp_path, 'wb') as f:
             f.write(file_data)
         
-        # Формируем подпись: путь через тире
-        caption = path.replace('/', ' - ') if path else ""
-        
-        # Отправляем в группу
+        # Отправляем в группу (файл живёт в Telegram!)
         await client.send_file(entity, tmp_path, caption=caption)
         
-        # Удаляем временный файл
         try:
             os.remove(tmp_path)
         except:
             pass
         
-        return web.json_response({"ok": True, "message": "Файл загружен"})
-    except Exception as e:
-        traceback.print_exc()
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
-
-
-async def handle_cloud_delete(request):
-    """Удаление файла (перемещение в корзину на 30 дней)"""
-    try:
-        d = await request.json()
-        ss = d.get("session", "")
-        group_id = d.get("group_id", "")
-        path = d.get("path", "")
-        filename = d.get("filename", "")
-        msg_id = d.get("msg_id")
-        
-        if not ss or not group_id:
-            return web.json_response({"ok": False, "error": "Нет данных"}, status=400)
-        
-        key = f"{path}/{filename}" if path else filename
-        CLOUD_TRASH[key] = time.time()
-        
-        # Опционально: удаляем сообщение из группы
-        if msg_id:
-            try:
-                client = await get_client(ss)
-                entity = await client.get_entity(int(group_id))
-                await client.delete_messages(entity, [msg_id])
-            except:
-                pass
-        
-        return web.json_response({"ok": True, "message": f"Файл {filename} перемещён в корзину (30 дней)"})
-    except Exception as e:
-        traceback.print_exc()
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
-
-
-async def handle_cloud_mkdir(request):
-    """Создание папки в облаке (создаёт тему в группе)"""
-    try:
-        d = await request.json()
-        ss = d.get("session", "")
-        group_id = d.get("group_id", "")
-        path = d.get("path", "")
-        folder_name = d.get("folder_name", "").strip()
-        
-        if not ss or not group_id or not folder_name:
-            return web.json_response({"ok": False, "error": "Нет данных"}, status=400)
-        
-        client = await get_client(ss)
-        entity = await client.get_entity(int(group_id))
-        
-        # Создаём тему (если супергруппа с темами и API доступен)
-        full_path = f"{path}/{folder_name}" if path else folder_name
-        if CreateForumTopicRequest is not None:
-            try:
-                await client(CreateForumTopicRequest(
-                    channel=entity,
-                    title=full_path,
-                    icon_color=0x6FB9F0
-                ))
-            except Exception:
-                # Если нет тем — просто отправляем сообщение-маркер
-                await client.send_message(entity, f"FOLDER: {full_path}")
-        else:
-            # API не доступен — используем сообщение-маркер
-            await client.send_message(entity, f"FOLDER: {full_path}")
-        
-        return web.json_response({"ok": True, "message": f"Папка {folder_name} создана"})
+        return web.json_response({"ok": True, "message": f"Файл {filename} загружен в группу"})
     except Exception as e:
         traceback.print_exc()
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
 async def handle_cloud_download(request):
-    """Скачивание файла из облака"""
+    """Скачивание файла из группы."""
     try:
         d = await request.json()
         ss = d.get("session", "")
@@ -3075,17 +3012,86 @@ async def handle_cloud_download(request):
         client = await get_client(ss)
         entity = await client.get_entity(int(group_id))
         
-        msg = await client.get_messages(entity, ids=[msg_id])
-        if not msg or not msg[0] or not msg[0].document:
+        msgs = await client.get_messages(entity, ids=[int(msg_id)])
+        if not msgs or not msgs[0] or not msgs[0].document:
             return web.json_response({"ok": False, "error": "Файл не найден"}, status=404)
         
-        filepath = os.path.join(TEMP_DIR, f"dl_{int(time.time())}_{msg_id}")
-        await client.download_media(msg[0], file=filepath)
+        msg = msgs[0]
+        filepath = os.path.join(TEMP_DIR, f"dl_{int(time.time())}_{msg_id}.bin")
+        await client.download_media(msg, file=filepath)
+        
+        fname = "file"
+        for attr in msg.document.attributes:
+            if isinstance(attr, DocumentAttributeFilename):
+                fname = attr.file_name
+                break
         
         return web.json_response({
             "ok": True,
             "filepath": filepath,
-            "filename": next((a.file_name for a in msg[0].document.attributes if isinstance(a, DocumentAttributeFilename)), "file")
+            "filename": fname
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def handle_cloud_delete(request):
+    """Удаление файла из группы (в корзину Telegram на 30 дней)."""
+    try:
+        d = await request.json()
+        ss = d.get("session", "")
+        group_id = d.get("group_id", "")
+        msg_id = d.get("msg_id")
+        
+        if not ss or not group_id or not msg_id:
+            return web.json_response({"ok": False, "error": "Нет данных"}, status=400)
+        
+        client = await get_client(ss)
+        entity = await client.get_entity(int(group_id))
+        
+        # Удаляем сообщение (Telegram хранит в корзине ~30 дней)
+        await client.delete_messages(entity, [int(msg_id)])
+        
+        return web.json_response({"ok": True, "message": "Файл удалён (корзина Telegram на 30 дней)"})
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def handle_cloud_mkdir(request):
+    """Создание новой «папки» = новой группы в Telegram."""
+    try:
+        d = await request.json()
+        ss = d.get("session", "")
+        folder_name = d.get("folder_name", "").strip()
+        
+        if not ss or not folder_name:
+            return web.json_response({"ok": False, "error": "Нет данных"}, status=400)
+        
+        client = await get_client(ss)
+        me = await client.get_me()
+        
+        group_id = None
+        
+        if CreateChatRequest is not None:
+            try:
+                result = await client(CreateChatRequest(
+                    users=[me.id],
+                    title=folder_name
+                ))
+                group_id = str(-result.chats[0].id)
+            except Exception as e:
+                print(f"[MKDIR] CreateChatRequest: {e}")
+        
+        if not group_id:
+            return web.json_response({"ok": False, "error": "Не удалось создать группу"}, status=500)
+        
+        return web.json_response({
+            "ok": True,
+            "message": f"Папка «{folder_name}» создана",
+            "group_id": group_id,
+            "group_name": folder_name
         })
     except Exception as e:
         traceback.print_exc()
@@ -3110,6 +3116,7 @@ app.router.add_post("/fill-max", handle_fill_max)
 app.router.add_post("/register", handle_register)
 app.router.add_post("/login", handle_login)
 app.router.add_post("/cloud-list", handle_cloud_list)
+app.router.add_post("/cloud-list-root", handle_cloud_list_root)
 app.router.add_post("/cloud-upload", handle_cloud_upload)
 app.router.add_post("/cloud-download", handle_cloud_download)
 app.router.add_post("/cloud-delete", handle_cloud_delete)
@@ -3121,7 +3128,7 @@ async def on_startup(app):
     port = app["port"]
     msg = (
         "=" * 60 + "\n"
-        f"X Backend v18.0 ЗАПУЩЕН (облако, регистрация, пауза, построчный пробив)\n"
+        f"X Backend v19.0 ЗАПУЩЕН (Telegram=БД: группы=папки, без USER_DB)\n"
         f"Host: 0.0.0.0  |  Port: {port}\n"
         + "=" * 60
     )

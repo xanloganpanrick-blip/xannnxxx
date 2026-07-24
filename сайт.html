@@ -251,21 +251,17 @@
             <div class="subtitle">Файловое хранилище на базе Telegram</div>
             <div class="card">
                 <div class="flex-between mb-8">
-                    <h3 id="cloudPathLabel">/</h3>
+                    <h3 id="cloudPathLabel">📂 Загрузка...</h3>
                     <div class="flex">
                         <button class="btn-dark btn-sm" onclick="cloudMkdir()">+ Папка</button>
                         <button class="btn-dark btn-sm" onclick="document.getElementById('cloudFileInput').click()">+ Файл</button>
                         <input type="file" id="cloudFileInput" style="display:none" onchange="cloudUpload(event)">
                     </div>
                 </div>
-                <div id="cloudItems" class="table-preview" style="max-height:400px;overflow:auto;">
-                    <p class="text-sm">Войдите в аккаунт для доступа к облаку</p>
+                <div id="cloudItems" style="max-height:500px;overflow:auto;">
+                    <p class="text-sm">Добавьте аккаунт Telegram для доступа к облаку</p>
                 </div>
-            </div>
-            <div class="card">
-                <h3>Корзина</h3>
-                <p class="text-sm mb-8">Удалённые файлы хранятся 30 дней</p>
-                <div id="trashItems"><p class="text-sm dim">Пусто</p></div>
+                <p class="text-xs mt-8" style="color:#555;">💡 Каждая группа Telegram = папка. Файлы хранятся в сообщениях групп. Удалённые файлы → корзина Telegram (30 дней).</p>
             </div>
         </div>
 
@@ -513,6 +509,7 @@ document.querySelectorAll('.nav-btn').forEach(function(b) {
         if (pg) pg.classList.add('active');
         if (b.dataset.page === 'accounts') renderAccs();
         if (b.dataset.page === 'probiv') refreshAccSelects();
+        if (b.dataset.page === 'cloud') cloudLoad();
     };
 });
 
@@ -1828,56 +1825,81 @@ async function filterByUploadedTxt2() {
     btn.textContent = 'Добить ФИО';
 }
 
-// ==================== ОБЛАКО ====================
-var _cloudPath = '';
-var _cloudGroupId = '';
+// ==================== ОБЛАКО (Telegram = БД: группы=папки) ====================
+var _cloudGroupId = '';       // текущая открытая группа (пусто = корень)
+var _cloudGroupName = '';
+var _cloudGroups = [];        // кэш списка групп
 
 async function cloudLoad() {
-    if (!_cloudGroupId) {
-        document.getElementById('cloudItems').innerHTML = '<p class="text-sm">Сначала войдите в аккаунт (вкладка Вход)</p>';
+    var ss = DB.accs[0] ? DB.accs[0].ss : '';
+    if (!ss) {
+        document.getElementById('cloudItems').innerHTML = '<p class="text-sm">Сначала добавьте аккаунт Telegram (вкладка Аккаунты)</p>';
         return;
     }
-    try {
-        var resp = await apiPost('/cloud-list', {
-            session: DB.accs[0] ? DB.accs[0].ss : '',
-            group_id: _cloudGroupId,
-            path: _cloudPath
-        });
-        if (resp.ok) {
-            document.getElementById('cloudPathLabel').textContent = _cloudPath ? '/' + _cloudPath : '/';
-            var items = resp.items || [];
-            var html = '';
-            if (_cloudPath) {
-                html += '<div style="cursor:pointer;padding:4px 0;color:#6495ED;" onclick="cloudNavUp()">📁 .. (наверх)</div>';
+    
+    if (!_cloudGroupId) {
+        // === КОРЕНЬ: показываем все группы аккаунта ===
+        try {
+            var resp = await apiPost('/cloud-list-root', { session: ss });
+            if (resp.ok) {
+                _cloudGroups = resp.groups || [];
+                document.getElementById('cloudPathLabel').textContent = '📂 Все папки (' + _cloudGroups.length + ')';
+                
+                var html = '';
+                for (var i = 0; i < _cloudGroups.length; i++) {
+                    var g = _cloudGroups[i];
+                    var icon = g.is_home ? '🏠' : (g.type === 'channel' ? '📢' : '📁');
+                    html += '<div class="list-item" style="cursor:pointer;" onclick="cloudOpenGroup(\'' + esc(g.id) + '\',\'' + esc(g.name) + '\')">' +
+                        '<div class="info"><span class="name">' + icon + ' ' + esc(g.name) + '</span>' +
+                        '<span class="phone">' + g.type + (g.is_home ? ' • дом' : '') + '</span></div>' +
+                        '<span class="badge badge-gray">→</span>' +
+                        '</div>';
+                }
+                document.getElementById('cloudItems').innerHTML = html || '<p class="text-sm dim">Нет групп. Создайте папку.</p>';
             }
-            for (var i = 0; i < items.length; i++) {
-                var item = items[i];
-                if (item.in_trash) continue;
-                var icon = item.type === 'folder' ? '📁' : '📄';
-                html += '<div class="list-item" oncontextmenu="cloudCtx(event,\'' + esc(item.name) + '\',' + item.msg_id + ')">' +
-                    '<div class="info"><span class="name">' + icon + ' ' + esc(item.name) + '</span>' +
-                    '<span class="phone">' + (item.size ? (item.size/1024).toFixed(1) + ' KB' : '') + '</span></div>' +
-                    '<button class="btn-dark btn-sm" onclick="cloudDownload(' + item.msg_id + ',\'' + esc(item.name) + '\')">Скачать</button>' +
-                    '<button class="btn-red btn-sm" onclick="cloudDelete(' + item.msg_id + ',\'' + esc(item.name) + '\')">Удалить</button>' +
-                    '</div>';
-            }
-            document.getElementById('cloudItems').innerHTML = html || '<p class="text-sm dim">Папка пуста</p>';
+        } catch(e) {
+            document.getElementById('cloudItems').innerHTML = '<p class="text-sm err">Ошибка: ' + e.message + '</p>';
         }
-    } catch(e) {
-        toast('Ошибка загрузки облака', false);
+    } else {
+        // === ВНУТРИ ГРУППЫ: показываем файлы ===
+        try {
+            var resp2 = await apiPost('/cloud-list', { session: ss, group_id: _cloudGroupId });
+            if (resp2.ok) {
+                document.getElementById('cloudPathLabel').textContent = '📁 ' + esc(resp2.group_name || _cloudGroupName) + ' (' + resp2.count + ' файлов)';
+                var items = resp2.items || [];
+                var html2 = '<div style="cursor:pointer;padding:6px 0;color:#6495ED;margin-bottom:8px;" onclick="cloudGoRoot()">📂 ← Все папки</div>';
+                
+                for (var j = 0; j < items.length; j++) {
+                    var item = items[j];
+                    html2 += '<div class="list-item" oncontextmenu="cloudCtx(event,\'' + esc(item.name) + '\',' + item.msg_id + ')">' +
+                        '<div class="info"><span class="name">📄 ' + esc(item.name) + '</span>' +
+                        '<span class="phone">' + (item.size ? (item.size/1024).toFixed(1) + ' KB' : '') + '</span></div>' +
+                        '<button class="btn-dark btn-sm" onclick="cloudDownload(' + item.msg_id + ',\'' + esc(item.name) + '\')">Скачать</button>' +
+                        '<button class="btn-red btn-sm" onclick="cloudDelete(' + item.msg_id + ',\'' + esc(item.name) + '\')">Удалить</button>' +
+                        '</div>';
+                }
+                document.getElementById('cloudItems').innerHTML = html2 || '<p class="text-sm dim">Папка пуста</p>';
+            }
+        } catch(e) {
+            document.getElementById('cloudItems').innerHTML = '<p class="text-sm err">Ошибка: ' + e.message + '</p>';
+        }
     }
 }
 
-function cloudNavUp() {
-    var parts = _cloudPath.split('/');
-    parts.pop();
-    _cloudPath = parts.join('/');
+function cloudOpenGroup(gid, name) {
+    _cloudGroupId = gid;
+    _cloudGroupName = name;
+    cloudLoad();
+}
+
+function cloudGoRoot() {
+    _cloudGroupId = '';
+    _cloudGroupName = '';
     cloudLoad();
 }
 
 function cloudCtx(e, name, msgId) {
     e.preventDefault();
-    // Упрощённое контекстное меню
     var menu = document.createElement('div');
     menu.style.cssText = 'position:fixed;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:4px;z-index:9999;min-width:120px;';
     menu.innerHTML = 
@@ -1898,10 +1920,8 @@ async function cloudDownload(msgId, name) {
             msg_id: msgId
         });
         if (resp.ok) {
-            // Скачиваем файл
             window.open(getServerUrl() + '/download/' + encodeURIComponent(resp.filepath.split('/').pop()), '_blank');
-            toast('Файл скачан: ' + name, true);
-            cloudLoad();
+            toast('Скачан: ' + name, true);
         }
     } catch(e) {
         toast('Ошибка скачивания', false);
@@ -1909,17 +1929,15 @@ async function cloudDownload(msgId, name) {
 }
 
 async function cloudDelete(msgId, name) {
-    if (!confirm('Удалить ' + name + '? (Будет в корзине 30 дней)')) return;
+    if (!confirm('Удалить ' + name + '?\nФайл попадёт в корзину Telegram на 30 дней.')) return;
     try {
         var resp = await apiPost('/cloud-delete', {
             session: DB.accs[0] ? DB.accs[0].ss : '',
             group_id: _cloudGroupId,
-            path: _cloudPath,
-            filename: name,
             msg_id: msgId
         });
         if (resp.ok) {
-            toast('Файл перемещён в корзину', true);
+            toast('Удалён: ' + name, true);
             cloudLoad();
         }
     } catch(e) {
@@ -1930,11 +1948,11 @@ async function cloudDelete(msgId, name) {
 function cloudUpload(event) {
     var file = event.target.files[0];
     if (!file) return;
+    if (!_cloudGroupId) return toast('Сначала откройте папку (группу)', false);
     
     var fd = new FormData();
     fd.append('session', DB.accs[0] ? DB.accs[0].ss : '');
     fd.append('group_id', _cloudGroupId);
-    fd.append('path', _cloudPath);
     fd.append('file', file);
     
     fetch(getServerUrl() + '/cloud-upload', { method: 'POST', body: fd })
@@ -1948,21 +1966,25 @@ function cloudUpload(event) {
             }
         })
         .catch(function(e) { toast('Ошибка: ' + e.message, false); });
+    
+    event.target.value = '';
 }
 
 async function cloudMkdir() {
-    var name = prompt('Название папки:');
+    var name = prompt('Название новой папки (группы):');
     if (!name) return;
     try {
         var resp = await apiPost('/cloud-mkdir', {
             session: DB.accs[0] ? DB.accs[0].ss : '',
-            group_id: _cloudGroupId,
-            path: _cloudPath,
             folder_name: name
         });
         if (resp.ok) {
-            toast('Папка создана!', true);
+            toast('Папка создана: ' + name, true);
+            _cloudGroupId = resp.group_id;
+            _cloudGroupName = resp.group_name;
             cloudLoad();
+        } else {
+            toast(resp.error || 'Ошибка', false);
         }
     } catch(e) {
         toast('Ошибка создания папки', false);
@@ -1983,16 +2005,14 @@ async function doLogin() {
         });
         if (resp.ok) {
             _cloudGroupId = resp.group_id;
-            document.getElementById('authResult').innerHTML = '<div class="ok">Вход выполнен! Group ID: ' + resp.group_id + '</div>';
+            _cloudGroupName = resp.group_name;
+            document.getElementById('authResult').innerHTML = '<div class="ok">✅ Вход: ' + esc(resp.group_name) + '</div>';
             toast('Вход выполнен!', true);
             // Переключаемся на облако
-            document.querySelectorAll('.nav-btn').forEach(function(b) { b.classList.remove('active'); });
-            document.querySelector('[data-page="cloud"]').classList.add('active');
-            document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
-            document.getElementById('page-cloud').classList.add('active');
+            switchToPage('cloud');
             cloudLoad();
         } else {
-            document.getElementById('authResult').innerHTML = '<div class="red">' + resp.error + '</div>';
+            document.getElementById('authResult').innerHTML = '<div class="red">' + esc(resp.error) + '</div>';
         }
     } catch(e) {
         toast('Ошибка входа', false);
@@ -2003,7 +2023,7 @@ async function doRegister() {
     var login = document.getElementById('authLogin').value.trim();
     var password = document.getElementById('authPassword').value.trim();
     if (!login || !password) return toast('Введите логин и пароль', false);
-    if (password.length < 4) return toast('Пароль должен быть не менее 4 символов', false);
+    if (password.length < 4) return toast('Пароль: минимум 4 символа', false);
     
     try {
         var resp = await apiPost('/register', {
@@ -2013,14 +2033,27 @@ async function doRegister() {
         });
         if (resp.ok) {
             _cloudGroupId = resp.group_id;
-            document.getElementById('authResult').innerHTML = '<div class="ok">Регистрация успешна! Group ID: ' + resp.group_id + '</div>';
-            toast('Регистрация успешна! Группа создана.', true);
+            _cloudGroupName = resp.group_name;
+            document.getElementById('authResult').innerHTML = '<div class="ok">✅ ' + esc(resp.message) + '</div>';
+            toast(resp.message, true);
+            // Переключаемся на облако
+            switchToPage('cloud');
+            cloudLoad();
         } else {
-            document.getElementById('authResult').innerHTML = '<div class="red">' + resp.error + '</div>';
+            document.getElementById('authResult').innerHTML = '<div class="red">' + esc(resp.error) + '</div>';
         }
     } catch(e) {
         toast('Ошибка регистрации', false);
     }
+}
+
+function switchToPage(name) {
+    document.querySelectorAll('.nav-btn').forEach(function(b) { b.classList.remove('active'); });
+    var navBtn = document.querySelector('[data-page="' + name + '"]');
+    if (navBtn) navBtn.classList.add('active');
+    document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+    var page = document.getElementById('page-' + name);
+    if (page) page.classList.add('active');
 }
 
 // ==================== ИНИЦИАЛИЗАЦИЯ ====================
