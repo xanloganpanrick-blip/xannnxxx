@@ -1,4 +1,4 @@
-# server.py - X Backend v17.0 (РћРџРўРРњРР—РђР¦РРЇ: Г—10 Р±С‹СЃС‚СЂРµРµ, С„РёР»СЊС‚СЂ РґР°С‚ РїРµСЂРІС‹Р№, РєСЌС€ СЃС‚СЂРѕРє, РїР°СЂР°Р»Р»РµР»СЊРЅС‹Рµ Р±РѕС‚С‹, batch 200)
+﻿# server.py - X Backend v17.0 (РћРџРўРРњРР—РђР¦РРЇ: Г—10 Р±С‹СЃС‚СЂРµРµ, С„РёР»СЊС‚СЂ РґР°С‚ РїРµСЂРІС‹Р№, РєСЌС€ СЃС‚СЂРѕРє, РїР°СЂР°Р»Р»РµР»СЊРЅС‹Рµ Р±РѕС‚С‹, batch 200)
 
 # РЈСЃС‚Р°РЅРѕРІРєР°: pip install aiohttp telethon openpyxl
 
@@ -489,7 +489,8 @@ async def poll_updates_with_buttons(bot_token, chat_id, confirm_id, topic_id=Non
                             msg_topic_id = msg.get("message_thread_id")
                             if msg_chat_id != str(chat_id):
                                 continue
-                            if topic_id and msg_topic_id != int(topic_id):
+                            # Пропускаем только если topic_id задан И msg_topic_id присутствует И они не совпадают
+                            if topic_id and msg_topic_id is not None and str(msg_topic_id) != str(topic_id):
                                 continue
                             cb_data = cb.get("data", "")
                             await s.post(
@@ -549,6 +550,15 @@ async def safe_confirm_with_buttons(bot_token, chat_id, stage_name, count, confi
     if not bot_token or not chat_id:
         add_log("[v] \u0411\u043E\u0442 \u043D\u0435 \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043D - \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0430\u044E \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438")
         return "confirm"
+    # Регистрируем подтверждение для веб-интерфейса (фронтенд может опрашивать /pending-confirm)
+    pending_web_confirms[confirm_id] = {
+        "stage": stage_name,
+        "count": count,
+        "timestamp": time.time(),
+        "result": None
+    }
+    CONFIRM_TIMEOUT = 600  # 10 минут на ответ, затем авто-продолжаем
+    t_sent = time.time()
     while True:
         sent = await send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, topic_id)
         if not sent:
@@ -557,8 +567,10 @@ async def safe_confirm_with_buttons(bot_token, chat_id, stage_name, count, confi
             continue
         add_log(f"[\u041E\u0416\u0418\u0414\u0410\u041D\u0418\u0415] \u041E\u0442\u043A\u0440\u043E\u0439\u0442\u0435 \u0431\u043E\u0442 \u0434\u043B\u044F: {stage_name}")
         while True:
+            # Проверка ответа из Telegram-бота
             if confirm_id in pending_confirms:
                 r = pending_confirms.pop(confirm_id)
+                pending_web_confirms.pop(confirm_id, None)
                 if r == "stop":
                     stop_requested = True
                     add_log("[x] \u041E\u0421\u0422\u0410\u041D\u041E\u0412\u041A\u0410 \u0412\u0421\u0415\u0425 \u041F\u0420\u041E\u0426\u0415\u0421\u0421\u041E\u0412")
@@ -572,6 +584,31 @@ async def safe_confirm_with_buttons(bot_token, chat_id, stage_name, count, confi
                 if r == "again":
                     add_log(f"[v] \u0415\u0429\u0401 \u0420\u0410\u0417 - \u043F\u043E\u0432\u0442\u043E\u0440 \u0434\u043B\u044F: {stage_name}")
                     break
+            # Проверка ответа из веб-интерфейса (/confirm-action)
+            web_data = pending_web_confirms.get(confirm_id)
+            if web_data and web_data.get("result") is not None:
+                r = web_data["result"]
+                pending_web_confirms.pop(confirm_id, None)
+                # Передаём ответ и в pending_confirms на случай параллельных опросов
+                pending_confirms[confirm_id] = r
+                if r == "stop":
+                    stop_requested = True
+                    add_log("[x] \u041E\u0421\u0422\u0410\u041D\u041E\u0412\u041A\u0410 \u0412\u0421\u0415\u0425 \u041F\u0420\u041E\u0426\u0415\u0421\u0421\u041E\u0412 (\u0432\u0435\u0431)")
+                    return "stop"
+                if r == "skip":
+                    add_log(f"[v] \u041F\u0420\u041E\u041F\u0423\u0429\u0415\u041D (\u0432\u0435\u0431): {stage_name}")
+                    return "skip"
+                if r == "confirm":
+                    add_log(f"[v] \u041F\u041E\u0414\u0422\u0412\u0415\u0420\u0416\u0414\u0415\u041D\u041E (\u0432\u0435\u0431): {stage_name}")
+                    return "confirm"
+                if r == "again":
+                    add_log(f"[v] \u0415\u0429\u0401 \u0420\u0410\u0417 (\u0432\u0435\u0431) - \u043F\u043E\u0432\u0442\u043E\u0440 \u0434\u043B\u044F: {stage_name}")
+                    break
+            # Таймаут: если ответа нет >10 минут — авто-продолжаем
+            if time.time() - t_sent > CONFIRM_TIMEOUT:
+                add_log(f"[!] \u0422\u0430\u0439\u043C\u0430\u0443\u0442 {CONFIRM_TIMEOUT}\u0441 \u0434\u043B\u044F {stage_name} — \u0430\u0432\u0442\u043E-\u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0430\u044E")
+                pending_web_confirms.pop(confirm_id, None)
+                return "confirm"
             await asyncio.sleep(0.5)
 
 async def send_file_to_bot(bot_token, chat_id, filepath, caption="", topic_id=None):
