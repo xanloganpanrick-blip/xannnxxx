@@ -1,4 +1,4 @@
-# server.py - X Backend v13.4 (DeepSeek BATCH + АДРЕСА + СУПЕРГРУППЫ)
+# server.py - X Backend v14.0 (ПЕРЕИМЕНОВАНИЕ ФАЙЛОВ ПО АДРЕСУ + ПОИСК ИНН В ГРУППЕ)
 # Установка: pip install aiohttp telethon openpyxl
 # Запуск: python server.py
 # Порт: 8765
@@ -30,7 +30,7 @@ user_clients = {}
 TEMP_DIR = "temp_files"
 os.makedirs(TEMP_DIR, exist_ok=True)
 pending_confirms = {}
-active_probevs = {}  # {session: task}
+active_probevs = {}
 probev_lock = asyncio.Lock()
 stop_requested = False
 
@@ -65,11 +65,31 @@ def normalize_fio_local(raw):
     return ' '.join(words).upper().replace('Ё', 'Е')
 
 
+def normalize_address_local(raw):
+    """Локальная нормализация адреса (без API)"""
+    if not raw:
+        return ""
+    # Убираем лишние пробелы, приводим к нижнему регистру
+    s = str(raw).strip().lower()
+    # Заменяем распространённые сокращения
+    replacements = {
+        'обл': 'область', 'обл.': 'область',
+        'г': 'город', 'г.': 'город',
+        'ул': 'улица', 'ул.': 'улица',
+        'д': 'дом', 'д.': 'дом',
+        'кв': 'квартира', 'кв.': 'квартира',
+        'корп': 'корпус', 'корп.': 'корпус',
+        'стр': 'строение', 'стр.': 'строение',
+    }
+    for old, new in replacements.items():
+        s = s.replace(old, new)
+    # Убираем лишние пробелы
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
+
 async def normalize_batch_deepseek(items, prompt_type='fio'):
-    """
-    Пакетная нормализация через DeepSeek
-    prompt_type: 'fio' или 'address'
-    """
+    """Пакетная нормализация через DeepSeek"""
     if not items:
         return []
     
@@ -77,7 +97,7 @@ async def normalize_batch_deepseek(items, prompt_type='fio'):
         if prompt_type == 'fio':
             return [normalize_fio_local(f) for f in items]
         else:
-            return items  # адреса не нормализуем локально
+            return [normalize_address_local(a) for a in items]
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -90,9 +110,11 @@ async def normalize_batch_deepseek(items, prompt_type='fio'):
             if prompt_type == 'fio':
                 system_prompt = "Normalize each FIO to format: LASTNAME FIRSTNAME PATRONYMIC. Return only normalized list, one per line, numbered. Use UPPERCASE."
                 items_text = "\n".join([f"{i+1}. {f}" for i, f in enumerate(items)])
-            else:
-                system_prompt = "Normalize each address to format: CITY, STREET, HOUSE, KV. Example: 'Тольятти, Голосова,26, кв.33'. Return only normalized list, one per line, numbered."
+            elif prompt_type == 'address':
+                system_prompt = "Normalize each address to format: CITY, STREET, HOUSE, KV. Example: 'Тольятти, Голосова, 26, кв. 33'. Remove 'кв.' from output. Return only normalized list, one per line, numbered."
                 items_text = "\n".join([f"{i+1}. {a}" for i, a in enumerate(items)])
+            else:
+                return items
             
             payload = {
                 "model": "deepseek-chat",
@@ -117,6 +139,9 @@ async def normalize_batch_deepseek(items, prompt_type='fio'):
                         if prompt_type == 'fio':
                             result.append(line.upper())
                         else:
+                            # Убираем "кв." из адреса
+                            line = re.sub(r'\s*кв\.?\s*', ', ', line)
+                            line = re.sub(r',\s*,', ',', line)
                             result.append(line)
                     return result
     except Exception as e:
@@ -125,7 +150,7 @@ async def normalize_batch_deepseek(items, prompt_type='fio'):
     # Fallback
     if prompt_type == 'fio':
         return [normalize_fio_local(f) for f in items]
-    return items
+    return [normalize_address_local(a) for a in items]
 
 
 def clean_phone(text):
@@ -193,6 +218,14 @@ def extract_phones_from_text(text):
         if len(clean) == 11 and clean.startswith('79'):
             phones.append(clean)
     return list(set(phones))
+
+
+def extract_inn_from_text(text):
+    """Извлекает ИНН (12 цифр) из текста"""
+    inn_match = re.search(r'\b\d{12}\b', text)
+    if inn_match:
+        return inn_match.group()
+    return None
 
 
 # ====================== MERGE / SPLIT ======================
@@ -392,7 +425,6 @@ async def poll_updates_with_buttons(bot_token, chat_id, confirm_id, topic_id=Non
                             msg_chat_id = str(msg.get("chat", {}).get("id"))
                             msg_topic_id = msg.get("message_thread_id")
                             
-                            # Проверяем chat_id и topic_id
                             if msg_chat_id != str(chat_id):
                                 continue
                             if topic_id and msg_topic_id != int(topic_id):
@@ -597,7 +629,7 @@ def parse_xlsx(path):
                 h['phone'] = col
             if any(k in v for k in ['SNILS']):
                 h['snils'] = col
-            if any(k in v for k in ['ADDR', 'АДРЕС']):
+            if any(k in v for k in ['ADDR', 'АДРЕС', 'АДРЕСС']):
                 h['addr'] = col
 
         for row in range(2, ws.max_row + 1):
@@ -784,10 +816,121 @@ async def dobiv_sauron(client, bot, fio, date, account_id, row_num, ws, wb, resu
         return []
 
 
+# ====================== ПОИСК ИНН В ГРУППЕ ======================
+async def find_inn_in_group(client, group_id, address, topic_id=None):
+    """
+    Ищет в группе/теме сообщение с адресом, извлекает ИНН
+    Возвращает: (inn, found) или (None, False)
+    """
+    try:
+        # Получаем сущность группы
+        entity = await client.get_entity(int(group_id))
+        
+        # Ищем сообщения с адресом (ищем по частям адреса)
+        search_parts = address.split(',')
+        search_terms = []
+        for part in search_parts:
+            part = part.strip()
+            if part and len(part) > 3:
+                search_terms.append(part)
+        
+        # Ищем сообщения
+        async for msg in client.iter_messages(entity, limit=100):
+            if not msg.text:
+                continue
+            
+            # Проверяем, есть ли адрес в сообщении
+            msg_lower = msg.text.lower()
+            address_lower = address.lower()
+            
+            # Ищем совпадение по ключевым частям
+            match_count = 0
+            for term in search_terms[:3]:  # берём первые 3 части
+                if term.lower() in msg_lower:
+                    match_count += 1
+            
+            # Если совпало хотя бы 2 части - считаем, что это оно
+            if match_count >= 2:
+                # Ищем ИНН
+                inn = extract_inn_from_text(msg.text)
+                if inn:
+                    return inn, True
+                else:
+                    return None, True  # сообщение найдено, но ИНН нет
+        
+        return None, False
+    except Exception as e:
+        print(f"[GROUP] Ошибка поиска: {e}")
+        return None, False
+
+
+# ====================== ПЕРЕИМЕНОВАНИЕ ФАЙЛОВ ======================
+async def rename_files_by_address(ws, client, group_id, topic_id, add_log, tables_names):
+    """
+    Переименовывает файлы по адресу из колонки "Адресс"
+    Ищет ИНН в группе/теме
+    Имя файла: ИНН_Адрес.xlsx или УК_Адрес.xlsx
+    """
+    if not group_id:
+        add_log("[RENAME] Группа не указана - пропускаю переименование")
+        return tables_names
+    
+    add_log("[RENAME] Начинаю переименование файлов по адресам...")
+    
+    # Собираем уникальные адреса из таблицы
+    address_map = {}  # {table_num: address}
+    table_nums = {}
+    
+    for row in range(2, ws.max_row + 1):
+        table_num = str(ws.cell(row=row, column=COL_NO).value or "").strip()
+        addr = str(ws.cell(row=row, column=COL_ADDR).value or "").strip()
+        
+        if table_num and addr and addr != 'None':
+            if table_num not in address_map:
+                address_map[table_num] = addr
+                table_nums[table_num] = row
+    
+    add_log(f"[RENAME] Найдено {len(address_map)} уникальных адресов")
+    
+    # Для каждого адреса ищем ИНН в группе
+    new_names = {}
+    for table_num, addr in address_map.items():
+        # Нормализуем адрес для поиска (убираем "кв.")
+        clean_addr = re.sub(r'\s*кв\.?\s*\d+', '', addr).strip()
+        clean_addr = re.sub(r',\s*,', ',', clean_addr)
+        
+        add_log(f"[RENAME] Ищу ИНН для: {clean_addr}")
+        
+        inn, found = await find_inn_in_group(client, group_id, clean_addr, topic_id)
+        
+        if found and inn:
+            new_name = f"{inn}_{clean_addr}"
+            add_log(f"[RENAME] Найден ИНН: {inn} -> {new_name}")
+        else:
+            new_name = f"УК_{clean_addr}"
+            add_log(f"[RENAME] ИНН не найден -> {new_name}")
+        
+        # Очищаем имя файла от недопустимых символов
+        new_name = re.sub(r'[<>:"/\\|?*]', '_', new_name)
+        new_names[table_num] = new_name
+    
+    # Обновляем имена таблиц
+    updated_names = []
+    for i, name in enumerate(tables_names):
+        table_num = str(i + 1)
+        if table_num in new_names:
+            updated_names.append(new_names[table_num])
+        else:
+            updated_names.append(name)
+    
+    add_log(f"[RENAME] Переименовано {len(new_names)} файлов")
+    return updated_names
+
+
 # ====================== FULL CYCLE (7 STAGES) ======================
 async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                          items_no_date, items_no_phone, items_snils,
-                         year_range, original_rows, tables_names=None, topic_id=None):
+                         year_range, original_rows, tables_names=None, topic_id=None, group_id=None):
     global stop_requested
     stop_requested = False
     
@@ -820,6 +963,9 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             await send_file_to_bot(bot_token, chat_id, result_file, "FINAL FILE (all stages)", topic_id)
             return
         
+        # Переименовываем файлы
+        final_names = await rename_files_by_address(ws, client, group_id, topic_id, add, tables_names)
+        
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
             phones_all = set()
@@ -839,9 +985,12 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                     wb_temp.save(xlsx_buffer)
                     xlsx_buffer.seek(0)
                     
-                    name = f"GEO_{table_num}.xlsx"
-                    if tables_names and int(table_num) <= len(tables_names):
-                        name = f"GEO_{tables_names[int(table_num)-1]}.xlsx"
+                    # Используем переименованное имя
+                    idx = int(table_num) - 1
+                    if idx < len(final_names):
+                        name = f"{final_names[idx]}.xlsx"
+                    else:
+                        name = f"GEO_{table_num}.xlsx"
                     zf.writestr(name, xlsx_buffer.getvalue())
                 except Exception as e:
                     add(f"[ZIP] Table {table_num} error: {e}")
@@ -1346,7 +1495,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
 # ====================== ENDPOINTS ======================
 async def handle_health(request):
-    return web.json_response({"ok": True, "message": "X Backend v13.4"})
+    return web.json_response({"ok": True, "message": "X Backend v14.0"})
 
 
 async def handle_root(request):
@@ -1483,7 +1632,8 @@ async def handle_full_probev(request):
         bot2 = d.get("bot2", "@proverim123_bot")
         bot_token = d.get("bot_token", "")
         chat_id = d.get("chat_id", "")
-        topic_id = d.get("topic_id", None)  # для супергрупп с темами
+        topic_id = d.get("topic_id", None)
+        group_id = d.get("group_id", None)  # ID группы для поиска ИНН
         year_range = d.get("year_range", "") or "1945-1975"
         items_no_date = d.get("items_no_date", [])
         items_no_phone = d.get("items_no_phone", [])
@@ -1503,10 +1653,11 @@ async def handle_full_probev(request):
                     del active_probevs[ss]
 
         print(f"\n{'='*60}")
-        print(f"[PROBEV] START FULL CYCLE (7 STAGES + DeepSeek)")
+        print(f"[PROBEV] START FULL CYCLE (7 STAGES + DeepSeek + RENAME)")
         print(f"[PROBEV] Bot1: {bot1}, Bot2: {bot2}")
         print(f"[PROBEV] Rows without date: {len(items_no_date)}")
         print(f"[PROBEV] Rows without phone: {len(items_no_phone)}")
+        print(f"[PROBEV] Group ID: {group_id or 'None'}")
         print(f"[PROBEV] Topic ID: {topic_id or 'None'}")
         print(f"{'='*60}\n")
 
@@ -1515,7 +1666,7 @@ async def handle_full_probev(request):
                 result = await run_full_cycle(
                     ss, bot1, bot2, bot_token, chat_id,
                     items_no_date, items_no_phone, items_snils,
-                    year_range, original_rows, tables_names, topic_id
+                    year_range, original_rows, tables_names, topic_id, group_id
                 )
                 return result
             finally:
@@ -1560,7 +1711,7 @@ async def on_startup(app):
     port = app["port"]
     msg = (
         "=" * 60 + "\n"
-        f"X Backend v13.4 STARTED (DeepSeek BATCH + АДРЕСА + СУПЕРГРУППЫ)\n"
+        f"X Backend v14.0 STARTED (DeepSeek BATCH + ПЕРЕИМЕНОВАНИЕ ПО АДРЕСУ)\n"
         f"Host: 0.0.0.0  |  Port: {port}\n"
         + "=" * 60
     )

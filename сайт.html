@@ -23,8 +23,7 @@
         .subtitle { font-size: 13px; color: #888; margin-bottom: 24px; }
         .card { background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; }
         .card h3 { font-size: 14px; margin-bottom: 14px; font-weight: 600; color: #ccc; }
-        .card h4 { font-size: 12px; margin-bottom: 10px; color: #888; font-weight: 400; }
-        input, select, textarea { width: 100%; padding: 10px 14px; background: #050505; border: 1px solid #1a1a1a; color: #fff; border-radius: 6px; margin-bottom: 10px; font-family: 'Inter', sans-serif; font-size: 13px; transition: border-color 0.15s; }
+        input, select, textarea { width: 100%; padding: 10px 14px; background: #050505; border: 1px solid #1a1a1a; color: #fff; border-radius: 6px; margin-bottom: 10px; font-family: 'Inter', sans-serif; font-size: 13px; }
         input:focus, select:focus, textarea:focus { outline: none; border-color: #444; }
         textarea { resize: vertical; min-height: 60px; font-family: 'Courier New', monospace; font-size: 12px; }
         button { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif; font-size: 13px; transition: all 0.15s; }
@@ -33,11 +32,9 @@
         .btn-dark { background: #0f0f0f; color: #fff; border: 1px solid #1a1a1a; } .btn-dark:hover { border-color: #444; }
         .btn-red { background: none; color: #ff4444; border: 1px solid #ff4444; } .btn-red:hover { background: #ff4444; color: #000; }
         .btn-green { background: #44ff44; color: #000; } .btn-green:hover { opacity: 0.85; }
-        .btn-yellow { background: #ffaa00; color: #000; } .btn-yellow:hover { opacity: 0.85; }
         .btn-sm { padding: 5px 12px; font-size: 11px; }
         .btn-block { width: 100%; }
         .flex { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-        .flex-between { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
         .mb-8 { margin-bottom: 8px; } .mb-16 { margin-bottom: 16px; } .mt-8 { margin-top: 8px; } .mt-16 { margin-top: 16px; }
         .w-full { width: 100%; }
         .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 10px; font-weight: 600; }
@@ -70,9 +67,6 @@
         .modal-box h3 { font-size: 18px; margin-bottom: 16px; }
         .modal-close { float: right; background: none; border: none; color: #666; font-size: 22px; cursor: pointer; padding: 0 4px; }
         .modal-close:hover { color: #fff; }
-        .step { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
-        .step-num { width: 22px; height: 22px; border-radius: 50%; background: #1a1a1a; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; color: #888; }
-        .step-num.active { background: #44ff44; color: #000; }
         .table-preview { overflow-x: auto; margin-top: 10px; max-height: 250px; overflow-y: auto; }
         .table-preview table { width: 100%; border-collapse: collapse; font-size: 11px; }
         .table-preview th { background: #0f0f0f; padding: 6px 8px; text-align: left; font-weight: 600; border-bottom: 1px solid #1a1a1a; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
@@ -91,7 +85,7 @@
         @keyframes fadeInUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
         .file-list { margin-top: 8px; max-height: 80px; overflow-y: auto; font-size: 11px; color: #666; }
         .file-list .file-item { padding: 2px 0; }
-        @media (max-width: 768px) { .sidebar { width: 50px; padding: 10px 4px; } .sidebar .logo { font-size: 16px; text-align: center; margin-bottom: 16px; } .nav-btn { font-size: 9px; text-align: center; padding: 8px 2px; } .nav-btn::first-letter { font-size: 14px; } .main { margin-left: 50px; padding: 12px; max-width: calc(100% - 50px); } .split-col { grid-template-columns: 1fr; } .stat-row { gap: 6px; } .stat-item { padding: 6px 10px; min-width: 50px; } .stat-item .stat-num { font-size: 16px; } .card { padding: 14px 16px; } }
+        @media (max-width: 768px) { .sidebar { width: 50px; padding: 10px 4px; } .sidebar .logo { font-size: 16px; text-align: center; margin-bottom: 16px; } .nav-btn { font-size: 9px; text-align: center; padding: 8px 2px; } .main { margin-left: 50px; padding: 12px; max-width: calc(100% - 50px); } .split-col { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
@@ -100,9 +94,9 @@
     <!-- SIDEBAR -->
     <div class="sidebar">
         <div class="logo"><span>X</span></div>
-        <button class="nav-btn active" data-page="accounts">Acc</button>
+        <button class="nav-btn active" data-page="accounts">Accounts</button>
         <button class="nav-btn" data-page="probiv">Probev</button>
-        <button class="nav-btn" data-page="checker">Check</button>
+        <button class="nav-btn" data-page="checker">Checker</button>
         <button class="nav-btn" data-page="dobiv">Dobiv</button>
         <button class="nav-btn" data-page="server">Server</button>
     </div>
@@ -143,6 +137,14 @@
                     <button class="btn-white" onclick="saveBotConfig()">Save</button>
                     <button class="btn-dark" onclick="testBot()">Test</button>
                 </div>
+            </div>
+            <div class="card">
+                <h3>Group for INN search (rename files)</h3>
+                <p class="text-sm mb-8">Group ID where bot will search addresses to find INN for file naming.</p>
+                <input type="text" id="group_id" placeholder="Group ID (e.g. -1001234567890)">
+                <p class="text-xs mb-8">For supergroups with topics, fill Topic ID below (optional)</p>
+                <input type="text" id="topic_id" placeholder="Topic ID (optional)">
+                <button class="btn-dark" onclick="saveGroupConfig()">Save group settings</button>
             </div>
         </div>
 
@@ -199,6 +201,9 @@
                 <div class="flex mt-8">
                     <button class="btn-white" id="btnProbiv" onclick="startProbiv()">START PROBEV</button>
                     <button class="btn-red" id="btnStopProbiv" onclick="stopProbiv()" disabled>STOP</button>
+                </div>
+                <div class="text-xs mt-8" style="color:#666;">
+                    Files will be renamed by address: ИНН_Адрес.xlsx or УК_Адрес.xlsx
                 </div>
             </div>
 
@@ -293,7 +298,7 @@
 
 <script>
 // ==================== DATABASE ====================
-var DB = JSON.parse(localStorage.getItem('xdb') || '{"accs":[],"botToken":"","botChatId":""}');
+var DB = JSON.parse(localStorage.getItem('xdb') || '{"accs":[],"botToken":"","botChatId":"","group_id":"","topic_id":""}');
 function saveDB() { localStorage.setItem('xdb', JSON.stringify(DB)); }
 
 function getServerUrl() {
@@ -397,6 +402,8 @@ function renderAccs() {
     }).join('');
     document.getElementById('botToken').value = DB.botToken || '';
     document.getElementById('botChatId').value = DB.botChatId || '';
+    document.getElementById('group_id').value = DB.group_id || '';
+    document.getElementById('topic_id').value = DB.topic_id || '';
 }
 
 function delAcc(i) {
@@ -482,6 +489,13 @@ function saveBotConfig() {
     DB.botChatId = document.getElementById('botChatId').value.trim();
     saveDB();
     toast('Bot config saved', true);
+}
+
+function saveGroupConfig() {
+    DB.group_id = document.getElementById('group_id').value.trim();
+    DB.topic_id = document.getElementById('topic_id').value.trim();
+    saveDB();
+    toast('Group config saved', true);
 }
 
 async function testBot() {
@@ -676,13 +690,14 @@ function renderTablePreview() {
     var rows = mergedData.rows || [];
     
     var emptyDate = 0, emptyPhone = 0, emptySnils = 0;
-    var fioIdx = -1, dateIdx = -1, phoneIdx = -1, snilsIdx = -1;
+    var fioIdx = -1, dateIdx = -1, phoneIdx = -1, snilsIdx = -1, addrIdx = -1;
     for (var i = 0; i < h.length; i++) {
         var hh = h[i].toLowerCase();
         if (hh.includes('fio') || hh.includes('фио') || hh.includes('имя') || hh.includes('фамилия')) fioIdx = i;
         if (hh.includes('дата') || hh.includes('date') || hh.includes('рожд')) dateIdx = i;
         if (hh.includes('номер') || hh.includes('телефон') || hh.includes('phone') || hh.includes('tel')) phoneIdx = i;
         if (hh.includes('снилс') || hh.includes('snils')) snilsIdx = i;
+        if (hh.includes('адрес') || hh.includes('адресс') || hh.includes('address')) addrIdx = i;
     }
     
     for (var r = 0; r < rows.length; r++) {
@@ -763,6 +778,8 @@ async function startProbiv() {
     var bot1 = document.getElementById('bot1').value.trim() || '@osint_pam_pam_bot';
     var bot2 = document.getElementById('bot2').value.trim() || '@proverim123_bot';
     var yearRange = document.getElementById('yearRange').value.trim() || '1945-1975';
+    var group_id = DB.group_id || '';
+    var topic_id = DB.topic_id || '';
     
     var headers = mergedData.headers || [];
     var rows = mergedData.rows || [];
@@ -808,6 +825,8 @@ async function startProbiv() {
     
     addLog('=== START PROBEV ===', 'ok');
     addLog('Rows: ' + rows.length + ', without date: ' + itemsNoDate.length + ', without phone: ' + itemsNoPhone.length, 'warn');
+    addLog('Group ID: ' + (group_id || 'not set'), 'dim');
+    addLog('Topic ID: ' + (topic_id || 'not set'), 'dim');
     
     try {
         var payload = {
@@ -816,6 +835,8 @@ async function startProbiv() {
             bot2: bot2,
             bot_token: botToken,
             chat_id: botChatId,
+            topic_id: topic_id || null,
+            group_id: group_id || null,
             year_range: yearRange,
             items_no_date: itemsNoDate,
             items_no_phone: itemsNoPhone,
@@ -834,7 +855,7 @@ async function startProbiv() {
         } else if (resp.cancelled) {
             addLog('[!] Cancelled', 'err');
         } else {
-            addLog('[v] Probev completed!', 'ok');
+            addLog('[v] Probev completed! ZIP archive sent to bot.', 'ok');
         }
     } catch(e) {
         addLog('[x] ERROR: ' + e.message, 'err');
@@ -1021,6 +1042,8 @@ function downloadDobResult() {
     document.getElementById('sUrl').value = getServerUrl();
     document.getElementById('botToken').value = DB.botToken || '';
     document.getElementById('botChatId').value = DB.botChatId || '';
+    document.getElementById('group_id').value = DB.group_id || '';
+    document.getElementById('topic_id').value = DB.topic_id || '';
     renderAccs();
     refreshAccSelects();
     checkServer();
