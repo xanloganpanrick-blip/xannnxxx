@@ -728,6 +728,16 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     else:
         add("ЭТАП 1 пропущен (нет строк без даты)")
 
+    # === ПЕРЕСЧЁТ СНИЛС после этапа 1 — часть дат уже заполнена! ===
+    real_snils = []
+    for row in range(2, ws.max_row + 1):
+        existing_date = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
+        snils_val = str(ws.cell(row=row, column=COL_SNILS).value or "").strip()
+        if (not existing_date or existing_date == 'None') and snils_val and len(clean_snils(snils_val)) >= 11:
+            real_snils.append(clean_snils(snils_val))
+    real_snils = list(set(real_snils))
+    add(f"[ПЕРЕСЧЁТ] СНИЛС с пустой датой после этапа 1: {len(real_snils)}")
+
     # ============ ЭТАП 2: СНИЛС -> БОТ1 ============
     if real_snils:
         cid = f"s2_{int(time.time())}"
