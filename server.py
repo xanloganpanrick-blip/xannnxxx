@@ -1,4 +1,4 @@
-# server.py - X Backend v13.0 (FULL INTEGRATION: merge + split + 7 stages + dobiv + DeepSeek)
+# server.py - X Backend v13.1 (FIXED: probev state management + бесконечное ожидание)
 # Установка: pip install aiohttp telethon openpyxl
 # Запуск: python server.py
 # Порт: 8765
@@ -23,7 +23,8 @@ user_clients = {}
 TEMP_DIR = "temp_files"
 os.makedirs(TEMP_DIR, exist_ok=True)
 pending_confirms = {}
-active_probevs = set()
+active_probevs = {}  # {session: task} - храним активные задачи
+probev_lock = asyncio.Lock()  # Блокировка для безопасного доступа
 stop_requested = False
 probev_context = {}  # хранит состояние текущего пробива
 
@@ -1247,7 +1248,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
 # ====================== ENDPOINTS ======================
 async def handle_health(request):
-    return web.json_response({"ok": True, "message": "X Backend v13.0"})
+    return web.json_response({"ok": True, "message": "X Backend v13.1"})
 
 
 async def handle_root(request):
@@ -1262,7 +1263,6 @@ async def handle_root(request):
 
 
 async def handle_upload_zip(request):
-    """Upload ZIP with multiple tables - merge automatically"""
     try:
         reader = await request.multipart()
         field = await reader.next()
@@ -1306,7 +1306,6 @@ async def handle_upload_zip(request):
             ws.append(row)
         wb.save(merged_path)
         
-        # Собираем имена таблиц
         names = [t.get('name', f'Table_{i+1}') for i, t in enumerate(tables_data)]
         
         return web.json_response({
@@ -1396,28 +1395,51 @@ async def handle_full_probev(request):
         if not ss:
             return web.json_response({"ok": False, "error": "No session"}, status=400)
 
-        if ss in active_probevs:
-            return web.json_response({"ok": False, "error": "Probev already running"}, status=409)
-        active_probevs.add(ss)
+        # Проверяем с блокировкой
+        async with probev_lock:
+            if ss in active_probevs:
+                task = active_probevs[ss]
+                if not task.done():
+                    return web.json_response({"ok": False, "error": "Probev already running"}, status=409)
+                else:
+                    del active_probevs[ss]
 
-        try:
-            print(f"\n{'='*60}")
-            print(f"[PROBEV] START FULL CYCLE (7 STAGES + DeepSeek)")
-            print(f"[PROBEV] Bot1: {bot1}, Bot2: {bot2}")
-            print(f"[PROBEV] Rows without date: {len(items_no_date)}")
-            print(f"[PROBEV] Rows without phone: {len(items_no_phone)}")
-            print(f"{'='*60}\n")
+        print(f"\n{'='*60}")
+        print(f"[PROBEV] START FULL CYCLE (7 STAGES + DeepSeek)")
+        print(f"[PROBEV] Bot1: {bot1}, Bot2: {bot2}")
+        print(f"[PROBEV] Rows without date: {len(items_no_date)}")
+        print(f"[PROBEV] Rows without phone: {len(items_no_phone)}")
+        print(f"{'='*60}\n")
 
-            result = await run_full_cycle(
-                ss, bot1, bot2, bot_token, chat_id,
-                items_no_date, items_no_phone, items_snils,
-                year_range, original_rows, tables_names
-            )
-            return web.json_response(result)
-        finally:
-            active_probevs.discard(ss)
+        # Запускаем задачу с гарантированной очисткой
+        async def run_and_cleanup():
+            try:
+                result = await run_full_cycle(
+                    ss, bot1, bot2, bot_token, chat_id,
+                    items_no_date, items_no_phone, items_snils,
+                    year_range, original_rows, tables_names
+                )
+                return result
+            finally:
+                # ВСЕГДА удаляем задачу из активных
+                async with probev_lock:
+                    if ss in active_probevs:
+                        del active_probevs[ss]
+                print(f"[PROBEV] Cleanup completed for session {ss[:10]}...")
+
+        task = asyncio.create_task(run_and_cleanup())
+        async with probev_lock:
+            active_probevs[ss] = task
+
+        result = await task
+        return web.json_response(result)
+
     except Exception as e:
         traceback.print_exc()
+        # ВСЕГДА удаляем при ошибке
+        async with probev_lock:
+            if ss in active_probevs:
+                del active_probevs[ss]
         return web.json_response({"ok": False, "error": str(e)}, status=400)
 
 
@@ -1442,7 +1464,7 @@ async def on_startup(app):
     port = app["port"]
     msg = (
         "=" * 60 + "\n"
-        f"X Backend v13.0 STARTED (DeepSeek + 7 stages + ZIP + Dobiv)\n"
+        f"X Backend v13.1 STARTED (FIXED: state management)\n"
         f"Host: 0.0.0.0  |  Port: {port}\n"
         + "=" * 60
     )
