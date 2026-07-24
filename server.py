@@ -1,4 +1,4 @@
-﻿# server.py - X Backend v17.0 (РћРџРўРРњРР—РђР¦РРЇ: Г—10 Р±С‹СЃС‚СЂРµРµ, С„РёР»СЊС‚СЂ РґР°С‚ РїРµСЂРІС‹Р№, РєСЌС€ СЃС‚СЂРѕРє, РїР°СЂР°Р»Р»РµР»СЊРЅС‹Рµ Р±РѕС‚С‹, batch 200)
+# server.py - X Backend v17.0 (РћРџРўРРњРР—РђР¦РРЇ: Г—10 Р±С‹СЃС‚СЂРµРµ, С„РёР»СЊС‚СЂ РґР°С‚ РїРµСЂРІС‹Р№, РєСЌС€ СЃС‚СЂРѕРє, РїР°СЂР°Р»Р»РµР»СЊРЅС‹Рµ Р±РѕС‚С‹, batch 200)
 
 # РЈСЃС‚Р°РЅРѕРІРєР°: pip install aiohttp telethon openpyxl
 
@@ -434,12 +434,12 @@ async def send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confi
     global stop_requested
     if stop_requested:
         return False
-    text = f"РџРћР”РўР’Р•Р Р”РРўР• РџР РћР‘РР’\n\nР­С‚Р°Рї: {stage_name}\nРЎС‚СЂРѕРє: {count}"
+    text = f"\u041F\u041E\u0414\u0422\u0412\u0415\u0420\u0414\u0418\u0422\u0415 \u041F\u0420\u041E\u0411\u0418\u0412\n\n\u042D\u0442\u0430\u043F: {stage_name}\n\u0421\u0442\u0440\u043E\u043A: {count}"
     buttons = [
-        [{"text": "РџРћР”РўР’Р•Р Р”РРўР¬", "callback_data": f"confirm_{confirm_id}"}],
-        [{"text": "РџР РћРџРЈРЎРўРРўР¬", "callback_data": f"skip_{confirm_id}"}],
-        [{"text": "РћРЎРўРђРќРћР’РРўР¬ Р’РЎРЃ", "callback_data": f"stop_{confirm_id}"}],
-        [{"text": "Р•Р©РЃ Р РђР—", "callback_data": f"again_{confirm_id}"}]
+        [{"text": "\u041F\u041E\u0414\u0422\u0412\u0415\u0420\u0414\u0418\u0422\u042C", "callback_data": f"confirm_{confirm_id}"}],
+        [{"text": "\u041F\u0420\u041E\u041F\u0423\u0421\u0422\u0418\u0422\u042C", "callback_data": f"skip_{confirm_id}"}],
+        [{"text": "\u041E\u0421\u0422\u0410\u041D\u041E\u0412\u0418\u0422\u042C \u0412\u0421\u0401", "callback_data": f"stop_{confirm_id}"}],
+        [{"text": "\u0415\u0429\u0401 \u0420\u0410\u0417", "callback_data": f"again_{confirm_id}"}]
     ]
     kb = {"inline_keyboard": buttons}
     payload = {"chat_id": int(chat_id), "text": text, "reply_markup": kb}
@@ -469,7 +469,7 @@ async def send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confi
 async def poll_updates_with_buttons(bot_token, chat_id, confirm_id, topic_id=None):
     global stop_requested
     offset = 0
-    print(f"[POLL] РќР°С‡РёРЅР°СЋ РѕРїСЂРѕСЃ РґР»СЏ confirm_id={confirm_id}")
+    print(f"[POLL] \u041D\u0430\u0447\u0438\u043D\u0430\u044E \u043E\u043F\u0440\u043E\u0441 \u0434\u043B\u044F confirm_id={confirm_id}")
     while True:
         try:
             async with aiohttp.ClientSession() as s:
@@ -501,41 +501,41 @@ async def poll_updates_with_buttons(bot_token, chat_id, confirm_id, topic_id=Non
                             if topic_id:
                                 payload["message_thread_id"] = int(topic_id)
                             if cb_data == f"confirm_{confirm_id}":
-                                payload["text"] = "РџРћР”РўР’Р•Р Р–Р”Р•РќРћ! Р’С‹РїРѕР»РЅСЏСЋ..."
+                                payload["text"] = "\u041F\u041E\u0414\u0422\u0412\u0415\u0420\u0416\u0414\u0415\u041D\u041E! \u0412\u044B\u043F\u043E\u043B\u043D\u044F\u044E..."
                                 await s.post(
                                     f"https://api.telegram.org/bot{bot_token}/editMessageText",
                                     json=payload
                                 )
                                 pending_confirms[confirm_id] = "confirm"
-                                print(f"[POLL] РџРћР”РўР’Р•Р Р–Р”Р•РќРћ")
+                                print(f"[POLL] \u041F\u041E\u0414\u0422\u0412\u0415\u0420\u0416\u0414\u0415\u041D\u041E")
                                 return
                             elif cb_data == f"skip_{confirm_id}":
-                                payload["text"] = "Р­РўРђРџ РџР РћРџРЈР©Р•Рќ"
+                                payload["text"] = "\u042D\u0422\u0410\u041F \u041F\u0420\u041E\u041F\u0423\u0429\u0415\u041D"
                                 await s.post(
                                     f"https://api.telegram.org/bot{bot_token}/editMessageText",
                                     json=payload
                                 )
                                 pending_confirms[confirm_id] = "skip"
-                                print(f"[POLL] РџР РћРџРЈР©Р•Рќ")
+                                print(f"[POLL] \u041F\u0420\u041E\u041F\u0423\u0429\u0415\u041D")
                                 return
                             elif cb_data == f"stop_{confirm_id}":
-                                payload["text"] = "РћРЎРўРђРќРћР’Р›Р•РќРћ! Р—Р°РІРµСЂС€Р°СЋ..."
+                                payload["text"] = "\u041E\u0421\u0422\u0410\u041D\u041E\u0412\u041B\u0415\u041D\u041E! \u0417\u0430\u0432\u0435\u0440\u0448\u0430\u044E..."
                                 await s.post(
                                     f"https://api.telegram.org/bot{bot_token}/editMessageText",
                                     json=payload
                                 )
                                 pending_confirms[confirm_id] = "stop"
                                 stop_requested = True
-                                print(f"[POLL] РћРЎРўРђРќРћР’Р›Р•РќРћ")
+                                print(f"[POLL] \u041E\u0421\u0422\u0410\u041D\u041E\u0412\u041B\u0415\u041D\u041E")
                                 return
                             elif cb_data == f"again_{confirm_id}":
-                                payload["text"] = "Р•Р©РЃ Р РђР—! РћС‚РїСЂР°РІР»СЏСЋ Р·Р°РЅРѕРІРѕ..."
+                                payload["text"] = "\u0415\u0429\u0401 \u0420\u0410\u0417! \u041E\u0442\u043F\u0440\u0430\u0432\u043B\u044F\u044E \u0437\u0430\u043D\u043E\u0432\u043E..."
                                 await s.post(
                                     f"https://api.telegram.org/bot{bot_token}/editMessageText",
                                     json=payload
                                 )
                                 pending_confirms[confirm_id] = "again"
-                                print(f"[POLL] Р•Р©РЃ Р РђР—")
+                                print(f"[POLL] \u0415\u0429\u0401 \u0420\u0410\u0417")
                                 return
         except Exception as e:
             print(f"[POLL] РћС€РёР±РєР°: {e}")
@@ -544,33 +544,33 @@ async def poll_updates_with_buttons(bot_token, chat_id, confirm_id, topic_id=Non
 async def safe_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, add_log, topic_id=None):
     global stop_requested
     if stop_requested:
-        add_log("[x] РћСЃС‚Р°РЅРѕРІРєР° Р·Р°РїСЂРѕС€РµРЅР°")
+        add_log("[x] \u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0430 \u0437\u0430\u043F\u0440\u043E\u0448\u0435\u043D\u0430")
         return "stop"
     if not bot_token or not chat_id:
-        add_log("[v] Р‘РѕС‚ РЅРµ РЅР°СЃС‚СЂРѕРµРЅ - РїСЂРѕРґРѕР»Р¶Р°СЋ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё")
+        add_log("[v] \u0411\u043E\u0442 \u043D\u0435 \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043D - \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0430\u044E \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438")
         return "confirm"
     while True:
         sent = await send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, topic_id)
         if not sent:
-            add_log("[!] РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ РІ Р±РѕС‚ - РїРѕРІС‚РѕСЂ С‡РµСЂРµР· 5СЃ...")
+            add_log("[!] \u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u044C \u0432 \u0431\u043E\u0442 - \u043F\u043E\u0432\u0442\u043E\u0440 \u0447\u0435\u0440\u0435\u0437 5\u0441...")
             await asyncio.sleep(5)
             continue
-        add_log(f"[РћР–РР”РђРќРР•] РћС‚РєСЂРѕР№С‚Рµ Р±РѕС‚ РґР»СЏ: {stage_name}")
+        add_log(f"[\u041E\u0416\u0418\u0414\u0410\u041D\u0418\u0415] \u041E\u0442\u043A\u0440\u043E\u0439\u0442\u0435 \u0431\u043E\u0442 \u0434\u043B\u044F: {stage_name}")
         while True:
             if confirm_id in pending_confirms:
                 r = pending_confirms.pop(confirm_id)
                 if r == "stop":
                     stop_requested = True
-                    add_log("[x] РћРЎРўРђРќРћР’РљРђ Р’РЎР•РҐ РџР РћР¦Р•РЎРЎРћР’")
+                    add_log("[x] \u041E\u0421\u0422\u0410\u041D\u041E\u0412\u041A\u0410 \u0412\u0421\u0415\u0425 \u041F\u0420\u041E\u0426\u0415\u0421\u0421\u041E\u0412")
                     return "stop"
                 if r == "skip":
-                    add_log(f"[v] РџР РћРџРЈР©Р•Рќ: {stage_name}")
+                    add_log(f"[v] \u041F\u0420\u041E\u041F\u0423\u0429\u0415\u041D: {stage_name}")
                     return "skip"
                 if r == "confirm":
-                    add_log(f"[v] РџРћР”РўР’Р•Р Р–Р”Р•РќРћ: {stage_name}")
+                    add_log(f"[v] \u041F\u041E\u0414\u0422\u0412\u0415\u0420\u0416\u0414\u0415\u041D\u041E: {stage_name}")
                     return "confirm"
                 if r == "again":
-                    add_log(f"[v] Р•Р©РЃ Р РђР— - РїРѕРІС‚РѕСЂ РґР»СЏ: {stage_name}")
+                    add_log(f"[v] \u0415\u0429\u0401 \u0420\u0410\u0417 - \u043F\u043E\u0432\u0442\u043E\u0440 \u0434\u043B\u044F: {stage_name}")
                     break
             await asyncio.sleep(0.5)
 
