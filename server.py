@@ -324,22 +324,31 @@ async def clear_bot(client, bot):
         print(f"[BOT] Ошибка /start для {bot}: {ex}")
 
 
-async def click_btn(client, bot, text):
-    """Ищет и нажимает кнопку с указанным текстом в последних сообщениях бота"""
-    try:
-        e = await client.get_entity(bot)
-        async for msg in client.iter_messages(e, limit=15):
-            if msg.buttons and time.time() - msg.date.timestamp() < 120:
-                for row in msg.buttons:
-                    for btn in row:
-                        if btn.text and text.lower() in btn.text.lower():
-                            await btn.click()
-                            await asyncio.sleep(2)
-                            print(f"[BOT] Нажата кнопка '{btn.text}' в {bot}")
-                            return True
-        print(f"[BOT] Кнопка '{text}' не найдена в {bot}")
-    except Exception as ex:
-        print(f"[BOT] Ошибка поиска кнопки: {ex}")
+async def click_btn(client, bot, text, retries=3):
+    """Ищет и нажимает кнопку с указанным текстом. Делает до retries попыток."""
+    e = await client.get_entity(bot)
+    for attempt in range(retries):
+        if attempt > 0:
+            await asyncio.sleep(3)  # ждём перед повтором
+        try:
+            async for msg in client.iter_messages(e, limit=30):
+                if msg.buttons and time.time() - msg.date.timestamp() < 300:
+                    for row in msg.buttons:
+                        for btn in row:
+                            if btn.text and text.lower() in btn.text.lower():
+                                await btn.click()
+                                await asyncio.sleep(2)
+                                print(f"[BOT] Нажата кнопка '{btn.text}' в {bot}")
+                                return True
+            # Логируем кнопки для отладки
+            async for msg in client.iter_messages(e, limit=5):
+                if msg.buttons:
+                    btns = [b.text for row in msg.buttons for b in row if b.text]
+                    print(f"[BOT] Доступные кнопки в {bot}: {btns}")
+                    break
+            print(f"[BOT] Кнопка '{text}' не найдена в {bot} (попытка {attempt+1}/{retries})")
+        except Exception as ex:
+            print(f"[BOT] Ошибка поиска кнопки: {ex}")
     return False
 
 
@@ -761,9 +770,9 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         await clear_bot(client, bot1)
         e = await client.get_entity(bot1)
         await client.send_message(e, "Пробивы")
-        await asyncio.sleep(2)
+        await asyncio.sleep(4)  # даём боту время показать меню
         await click_btn(client, bot1, "СНИЛС")
-        await asyncio.sleep(2)
+        await asyncio.sleep(3)
         # Запоминаем ID последнего сообщения перед отправкой
         last_msgs = await client.get_messages(e, limit=1)
         last_msg_id = last_msgs[0].id if last_msgs else 0
