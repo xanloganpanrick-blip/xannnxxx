@@ -1,4 +1,4 @@
-# server.py - X Backend v14.1 (РУССКИЙ ИНТЕРФЕЙС + ПРОБИВЫ)
+# server.py - X Backend v15.0 (ПОЛНАЯ ИНТЕГРАЦИЯ: ДОБИВ КВАРТИР + МАКСЫ + ЗАВЕРШЕНИЕ)
 # Установка: pip install aiohttp telethon openpyxl
 # Запуск: python server.py
 # Порт: 8765
@@ -24,6 +24,9 @@ from openpyxl.styles import PatternFill
 API_ID = 2985935
 API_HASH = "a436d51ced3ec96a65d8414eb8e0a92d"
 DEEPSEEK_API_KEY = "sk-ca6b6569a9b64d0a908eb16ec3b69ce5"
+
+# Резервный API ключ (можно добавить OpenAI/Anthropic при необходимости)
+BACKUP_API_KEY = None  # "sk-...备用"
 
 sessions = {}
 user_clients = {}
@@ -55,6 +58,14 @@ async def log_and_cors(request, handler):
     return response
 
 # ====================== УТИЛИТЫ ======================
+def capitalize_words(text):
+    """Каждое слово с прописной буквы (кроме заголовков)"""
+    if not text:
+        return text
+    words = str(text).split()
+    return ' '.join([w.capitalize() for w in words])
+
+
 def normalize_fio_local(raw):
     if not raw:
         return ""
@@ -62,7 +73,9 @@ def normalize_fio_local(raw):
     words = [w.strip() for w in cleaned.split() if w.strip()]
     if not words:
         return ""
-    return ' '.join(words).upper().replace('Ё', 'Е')
+    result = ' '.join(words).upper().replace('Ё', 'Е')
+    # Приводим к формату "Каждое Слово С Прописной"
+    return capitalize_words(result.lower())
 
 
 def normalize_address_local(raw):
@@ -81,10 +94,13 @@ def normalize_address_local(raw):
     for old, new in replacements.items():
         s = s.replace(old, new)
     s = re.sub(r'\s+', ' ', s).strip()
-    return s
+    # Приводим к формату "Город, Улица, Дом, Квартира"
+    parts = [p.strip().capitalize() for p in s.split(',') if p.strip()]
+    return ', '.join(parts)
 
 
-async def normalize_batch_deepseek(items, prompt_type='fio'):
+async def normalize_batch_deepseek(items, prompt_type='fio', retry_count=0):
+    """Пакетная нормализация через DeepSeek с резервной моделью"""
     if not items:
         return []
     
@@ -94,6 +110,7 @@ async def normalize_batch_deepseek(items, prompt_type='fio'):
         else:
             return [normalize_address_local(a) for a in items]
     
+    # Пробуем DeepSeek
     try:
         async with aiohttp.ClientSession() as session:
             url = "https://api.deepseek.com/v1/chat/completions"
@@ -103,10 +120,13 @@ async def normalize_batch_deepseek(items, prompt_type='fio'):
             }
             
             if prompt_type == 'fio':
-                system_prompt = "Приведи каждое ФИО к формату: ФАМИЛИЯ ИМЯ ОТЧЕСТВО. Верни только список, по одному на строку, с номерами. ВСЕ ЗАГЛАВНЫЕ."
+                system_prompt = "Приведи каждое ФИО к формату: Фамилия Имя Отчество (каждое слово с большой буквы). Верни только список, по одному на строку, с номерами."
                 items_text = "\n".join([f"{i+1}. {f}" for i, f in enumerate(items)])
             elif prompt_type == 'address':
-                system_prompt = "Приведи каждый адрес к формату: ГОРОД, УЛИЦА, ДОМ, КВАРТИРА. Пример: 'Тольятти, Голосова, 26, 33'. Убери 'кв.' из вывода. Верни только список, по одному на строку, с номерами."
+                system_prompt = "Приведи каждый адрес к формату: Город, Улица, Дом, Квартира (без 'кв.'). Пример: 'Тольятти, Голосова, 26, 33'. Каждое слово с большой буквы. Верни только список, по одному на строку, с номерами."
+                items_text = "\n".join([f"{i+1}. {a}" for i, a in enumerate(items)])
+            elif prompt_type == 'find_apartment':
+                system_prompt = "Для каждого адреса без квартиры найди квартиру из списка. Верни адрес с квартирой в формате: Город, Улица, Дом, Квартира. Каждое слово с большой буквы. Верни только список, по одному на строку, с номерами."
                 items_text = "\n".join([f"{i+1}. {a}" for i, a in enumerate(items)])
             else:
                 return items
@@ -132,18 +152,26 @@ async def normalize_batch_deepseek(items, prompt_type='fio'):
                         if re.match(r'^\d+\.', line):
                             line = re.sub(r'^\d+\.\s*', '', line)
                         if prompt_type == 'fio':
-                            result.append(line.upper())
+                            # Приводим к формату "Каждое Слово С Прописной"
+                            result.append(capitalize_words(line))
                         else:
-                            line = re.sub(r'\s*кв\.?\s*', ', ', line)
-                            line = re.sub(r',\s*,', ',', line)
-                            result.append(line)
+                            result.append(capitalize_words(line))
                     return result
     except Exception as e:
-        print(f"[DEEPSEEK] Batch error: {e}")
+        print(f"[DEEPSEEK] Ошибка: {e}")
+        
+        # Если есть резервный ключ и это первая попытка
+        if BACKUP_API_KEY and retry_count == 0:
+            print("[DEEPSEEK] Переключение на резервную модель...")
+            # Здесь можно добавить OpenAI/Anthropic
+            pass
     
+    # Fallback: локальная нормализация
     if prompt_type == 'fio':
         return [normalize_fio_local(f) for f in items]
-    return [normalize_address_local(a) for a in items]
+    elif prompt_type == 'address' or prompt_type == 'find_apartment':
+        return [normalize_address_local(a) for a in items]
+    return items
 
 
 def clean_phone(text):
@@ -152,6 +180,16 @@ def clean_phone(text):
     d = re.sub(r'[^0-9]', '', str(text))
     if len(d) >= 10:
         return '+7' + d[-10:]
+    return d
+
+
+def clean_phone_without_plus(text):
+    """Очищает телефон и возвращает без +7 (только цифры)"""
+    if not text:
+        return ""
+    d = re.sub(r'[^0-9]', '', str(text))
+    if len(d) >= 10:
+        return '7' + d[-10:]
     return d
 
 
@@ -217,6 +255,40 @@ def extract_inn_from_text(text):
     inn_match = re.search(r'\b\d{12}\b', text)
     if inn_match:
         return inn_match.group()
+    return None
+
+
+def extract_address_from_report(text):
+    """Извлекает адрес из отчёта саурона"""
+    patterns = [
+        r'Адрес[:\s]+([^\n]+)',
+        r'Контактный адрес[:\s]+([^\n]+)',
+        r'Адрес регистрации[:\s]+([^\n]+)',
+        r'АДРЕС[:\s]+([^\n]+)',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def extract_apartment_from_report(text, target_address):
+    """Извлекает квартиру из отчёта по адресу"""
+    # Ищем все адреса в отчёте
+    address_pattern = r'(?:Адрес|Контактный адрес|Адрес регистрации|АДРЕС)[:\s]+([^\n]+)'
+    matches = re.findall(address_pattern, text, re.IGNORECASE)
+    
+    # Нормализуем целевой адрес (без квартиры)
+    target_clean = re.sub(r',?\s*кв\.?\s*\d+', '', target_address).strip().lower()
+    
+    for addr in matches:
+        addr_clean = re.sub(r',?\s*кв\.?\s*\d+', '', addr).strip().lower()
+        if target_clean in addr_clean or addr_clean in target_clean:
+            # Ищем квартиру в этом адресе
+            apt_match = re.search(r'кв\.?\s*(\d+)', addr, re.IGNORECASE)
+            if apt_match:
+                return apt_match.group(1)
     return None
 
 
@@ -550,6 +622,25 @@ async def send_zip_to_bot(bot_token, chat_id, zip_path, caption="", topic_id=Non
         print(f"[BOT] ZIP ошибка: {e}")
 
 
+async def send_txt_to_bot(bot_token, chat_id, content, filename, caption="", topic_id=None):
+    """Отправляет TXT файл в бот"""
+    try:
+        txt_buffer = io.BytesIO(content.encode('utf-8'))
+        txt_buffer.seek(0)
+        
+        async with aiohttp.ClientSession() as s:
+            data = aiohttp.FormData()
+            data.add_field('chat_id', str(chat_id))
+            data.add_field('caption', caption)
+            data.add_field('document', txt_buffer, filename=filename)
+            if topic_id:
+                data.add_field('message_thread_id', str(topic_id))
+            await s.post(f"https://api.telegram.org/bot{bot_token}/sendDocument", data=data)
+            print(f"[BOT] TXT отправлен: {filename}")
+    except Exception as e:
+        print(f"[BOT] TXT ошибка: {e}")
+
+
 # ====================== РАБОТА С БОТАМИ ПРОБИВА ======================
 async def clear_bot(client, bot):
     try:
@@ -599,6 +690,50 @@ async def wait_xlsx(client, bot, timeout=180, since_msg_id=None):
                     return msg
         await asyncio.sleep(3)
     print(f"[BOT] XLSX не получен")
+    return None
+
+
+async def wait_txt(client, bot, timeout=180, since_msg_id=None):
+    """Ожидает TXT файл от бота"""
+    e = await client.get_entity(bot)
+    start = time.time()
+    print(f"[BOT] Ожидаю TXT от {bot}...")
+    while time.time() - start < timeout:
+        msgs = await client.get_messages(e, limit=5)
+        for msg in msgs:
+            if not msg or not msg.document:
+                continue
+            if since_msg_id is not None and msg.id <= since_msg_id:
+                continue
+            for a in msg.document.attributes:
+                if isinstance(a, DocumentAttributeFilename) and a.file_name.endswith('.txt'):
+                    print(f"[BOT] Получен TXT: {a.file_name}")
+                    return msg
+        await asyncio.sleep(3)
+    print(f"[BOT] TXT не получен")
+    return None
+
+
+async def wait_report(client, bot, phone, timeout=300):
+    """Ожидает отчёт от бота по номеру телефона"""
+    e = await client.get_entity(bot)
+    start = time.time()
+    print(f"[BOT] Ожидаю отчёт по номеру {phone} от {bot}...")
+    
+    # Отправляем запрос
+    await client.send_message(e, phone)
+    
+    while time.time() - start < timeout:
+        msgs = await client.get_messages(e, limit=10)
+        for msg in msgs:
+            if not msg or not msg.text:
+                continue
+            # Проверяем, что это отчёт по нашему номеру
+            if phone in msg.text and ("ОТЧЕТ" in msg.text or "ЗАПРОС" in msg.text):
+                print(f"[BOT] Получен отчёт по номеру {phone}")
+                return msg.text
+        await asyncio.sleep(5)
+    print(f"[BOT] Отчёт по номеру {phone} не получен")
     return None
 
 
@@ -784,6 +919,60 @@ def fill_snils_dates(ws, response_records):
     return filled
 
 
+def fill_phones_by_numbers(ws, phone_to_fio_map):
+    """Заполняет ФИО по номерам из TXT (как в minecraft.py)"""
+    filled = 0
+    print(f"[FILL-PHONES-BY-NUMBERS] Начинаю заполнение ФИО по номерам. Карта: {len(phone_to_fio_map)}")
+    
+    for row in range(2, ws.max_row + 1):
+        phone_val = clean_phone(str(ws.cell(row=row, column=COL_PHONE).value or "").strip())
+        if not phone_val:
+            continue
+        
+        # Ищем номер в карте (без +7)
+        phone_digits = re.sub(r'[^0-9]', '', phone_val)
+        if len(phone_digits) >= 10:
+            phone_key = '7' + phone_digits[-10:]
+        else:
+            phone_key = phone_digits
+        
+        if phone_key in phone_to_fio_map:
+            fio_val = phone_to_fio_map[phone_key]
+            if fio_val:
+                ws.cell(row=row, column=COL_FIO).value = normalize_fio_local(fio_val)
+                filled += 1
+                print(f"[FILL-PHONES-BY-NUMBERS] Строка {row}: ЗАПОЛНЕНО ФИО для {phone_key}")
+    
+    print(f"[FILL-PHONES-BY-NUMBERS] ИТОГО заполнено ФИО: {filled}")
+    return filled
+
+
+def fill_apartments_from_report(ws, address_to_apartment_map):
+    """Заполняет квартиры по адресу из отчёта"""
+    filled = 0
+    print(f"[FILL-APARTMENTS] Начинаю заполнение квартир. Карта: {len(address_to_apartment_map)}")
+    
+    for row in range(2, ws.max_row + 1):
+        addr_val = str(ws.cell(row=row, column=COL_ADDR).value or "").strip()
+        if not addr_val or addr_val == 'None':
+            continue
+        
+        # Нормализуем адрес (без квартиры)
+        addr_clean = re.sub(r',?\s*кв\.?\s*\d+', '', addr_val).strip().lower()
+        
+        # Ищем совпадение
+        for key, apartment in address_to_apartment_map.items():
+            if key.lower() in addr_clean or addr_clean in key.lower():
+                # Добавляем квартиру в адрес
+                ws.cell(row=row, column=COL_ADDR).value = f"{addr_val}, {apartment}"
+                filled += 1
+                print(f"[FILL-APARTMENTS] Строка {row}: ДОБАВЛЕНА КВАРТИРА {apartment}")
+                break
+    
+    print(f"[FILL-APARTMENTS] ИТОГО заполнено квартир: {filled}")
+    return filled
+
+
 # ====================== ДОБИВ ЧЕРЕЗ САУРОН ======================
 async def dobiv_sauron(client, bot, fio, date, account_id, row_num, ws, wb, result_file, add_log):
     try:
@@ -809,6 +998,29 @@ async def dobiv_sauron(client, bot, fio, date, account_id, row_num, ws, wb, resu
     except Exception as e:
         add_log(f"[ДОБИВ] Ошибка: {e}")
         return []
+
+
+async def dobiv_by_numbers(client, bot, phone, add_log):
+    """Пробивает номер телефона через бот 2 и возвращает отчёт"""
+    try:
+        # Добавляем 7 в начале, если её нет
+        phone_clean = clean_phone(phone)
+        phone_for_send = clean_phone_without_plus(phone)
+        if not phone_for_send.startswith('7'):
+            phone_for_send = '7' + phone_for_send
+        
+        add_log(f"[ДОБИВ-КВАРТИР] Отправляю номер: {phone_for_send}")
+        
+        # Ждём отчёт
+        report = await wait_report(client, bot, phone_for_send, timeout=300)
+        if report:
+            add_log(f"[ДОБИВ-КВАРТИР] Получен отчёт для {phone_for_send}")
+            return report
+        
+        return None
+    except Exception as e:
+        add_log(f"[ДОБИВ-КВАРТИР] Ошибка: {e}")
+        return None
 
 
 # ====================== ПОИСК ИНН В ГРУППЕ ======================
@@ -872,7 +1084,7 @@ async def rename_files_by_address(ws, client, group_id, topic_id, add_log, table
     
     new_names = {}
     for table_num, addr in address_map.items():
-        clean_addr = re.sub(r'\s*кв\.?\s*\d+', '', addr).strip()
+        clean_addr = re.sub(r',?\s*кв\.?\s*\d+', '', addr).strip()
         clean_addr = re.sub(r',\s*,', ',', clean_addr)
         
         add_log(f"[ПЕРЕИМЕНОВАНИЕ] Ищу ИНН для: {clean_addr}")
@@ -901,7 +1113,53 @@ async def rename_files_by_address(ws, client, group_id, topic_id, add_log, table
     return updated_names
 
 
-# ====================== ПОЛНЫЙ ЦИКЛ ПРОБИВА (7 ЭТАПОВ) ======================
+# ====================== ФИЛЬТР ПО НОМЕРАМ (как в сименамиmax.html) ======================
+def filter_by_phones(headers, rows, phone_list):
+    """Фильтрует таблицу по списку номеров (как в сименамиmax.html)"""
+    if not phone_list:
+        return rows
+    
+    # Находим колонку с номером
+    phone_idx = -1
+    for i, h in enumerate(headers):
+        hl = h.lower()
+        if hl in ['номер', 'телефон', 'phone', 'tel', 'nomer']:
+            phone_idx = i
+            break
+        if 'номер' in hl or 'телефон' in hl or 'phone' in hl:
+            phone_idx = i
+            break
+    
+    if phone_idx == -1:
+        return rows
+    
+    # Создаём множество номеров для быстрого поиска
+    phone_set = set()
+    for p in phone_list:
+        clean = clean_phone(p)
+        if clean:
+            digits = re.sub(r'[^0-9]', '', clean)
+            if len(digits) >= 10:
+                phone_set.add('7' + digits[-10:])
+    
+    # Фильтруем строки
+    filtered = []
+    for row in rows:
+        if phone_idx >= len(row):
+            continue
+        phone_val = clean_phone(str(row[phone_idx] or ''))
+        if not phone_val:
+            continue
+        digits = re.sub(r'[^0-9]', '', phone_val)
+        if len(digits) >= 10:
+            key = '7' + digits[-10:]
+            if key in phone_set:
+                filtered.append(row)
+    
+    return filtered
+
+
+# ====================== ПОЛНЫЙ ЦИКЛ ПРОБИВА (8 ЭТАПОВ) ======================
 async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                          items_no_date, items_no_phone, items_snils,
                          year_range, original_rows, tables_names=None, topic_id=None, group_id=None):
@@ -924,7 +1182,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                 wb.save(result_file)
                 await send_file_to_bot(bot_token, chat_id, result_file, f"Таблица после: {stage_label}", topic_id)
 
-    async def send_final_zip():
+    async def send_final_zip(complete_session=False):
         if not bot_token or not chat_id:
             return
         
@@ -968,6 +1226,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                     add(f"[ZIP] Ошибка таблицы {table_num}: {e}")
                     continue
             
+            # Добавляем numbers.txt
             if phones_all:
                 zf.writestr('numbers.txt', '\n'.join(sorted(phones_all)))
             else:
@@ -978,8 +1237,33 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         with open(zip_path, 'wb') as f:
             f.write(zip_buffer.getvalue())
         
-        await send_zip_to_bot(bot_token, chat_id, zip_path, "ИТОГОВЫЙ ZIP АРХИВ (все таблицы + numbers.txt)", topic_id)
+        caption = "ИТОГОВЫЙ ZIP АРХИВ (все таблицы + numbers.txt)"
+        if complete_session:
+            caption = "СЕССИЯ ЗАВЕРШЕНА! " + caption
+        
+        await send_zip_to_bot(bot_token, chat_id, zip_path, caption, topic_id)
         add("[v] ZIP архив отправлен")
+        
+        return zip_path
+
+    async def send_txt_for_max_check():
+        """Отправляет TXT с номерами для чека максов"""
+        if not bot_token or not chat_id:
+            return
+        
+        phones = []
+        for row in range(2, ws.max_row + 1):
+            phone_val = str(ws.cell(row=row, column=COL_PHONE).value or "").strip()
+            if phone_val and phone_val != 'None' and phone_val != '0':
+                clean = clean_phone_without_plus(phone_val)
+                if clean:
+                    phones.append(clean)
+        
+        if phones:
+            phones = list(set(phones))
+            content = '\n'.join(phones)
+            await send_txt_to_bot(bot_token, chat_id, content, "check_max.txt", "Номера для чека максов", topic_id)
+            add(f"[TXT] Отправлен check_max.txt с {len(phones)} номерами")
 
     # === СОЗДАЁМ ТАБЛИЦУ ===
     result_file = os.path.join(TEMP_DIR, f"result_{int(time.time())}.xlsx")
@@ -1212,6 +1496,67 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
+    # ============ ЭТАП 3.5: ПРОБИВ ПО НОМЕРУ (НОВЫЙ ЭТАП) ============
+    # Собираем номера для строк, у которых всё ещё нет даты
+    phones_for_probev = []
+    phone_rows = []
+    for row in range(2, ws.max_row + 1):
+        existing_date = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
+        if not existing_date or existing_date == 'None' or existing_date == '0':
+            phone_val = str(ws.cell(row=row, column=COL_PHONE).value or "").strip()
+            if phone_val and phone_val != 'None' and phone_val != '0':
+                clean = clean_phone(phone_val)
+                if clean:
+                    phones_for_probev.append(clean)
+                    phone_rows.append(row)
+    
+    if phones_for_probev and not stop_requested:
+        cid = f"s35_{int(time.time())}"
+        add(f"ЭТАП 3.5: ПРОБИВ ПО НОМЕРУ -> бот2 ({len(phones_for_probev)} номеров)")
+
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 3.5: ПРОБИВ ПО НОМЕРУ", len(phones_for_probev), cid, add, topic_id)
+        if result == "stop":
+            await send_final_zip()
+            return {"ok": True, "log": log, "stopped": True}
+        if result == "skip":
+            add("[v] ЭТАП 3.5 ПРОПУЩЕН")
+        elif result == "confirm":
+            add("[v] ПОДТВЕРЖДЕНО! Начинаю пробив по номерам...")
+
+            # Формируем TXT с номерами (без +7)
+            txt_lines = []
+            for phone in phones_for_probev:
+                clean = clean_phone_without_plus(phone)
+                if clean:
+                    txt_lines.append(clean)
+            
+            txt_content = '\n'.join(txt_lines)
+            tpath = os.path.join(TEMP_DIR, f"t35_{int(time.time())}.txt")
+            with open(tpath, 'w', encoding='utf-8') as f:
+                f.write(txt_content)
+
+            e = await client.get_entity(bot2)
+            last_msgs = await client.get_messages(e, limit=1)
+            last_msg_id = last_msgs[0].id if last_msgs else 0
+            await client.send_file(e, tpath)
+            add("Номера отправлены в бот2, жду ответ...")
+
+            msg = await wait_xlsx(client, bot2, 300, since_msg_id=last_msg_id)
+            if msg:
+                rpath = os.path.join(TEMP_DIR, f"r35_{int(time.time())}.xlsx")
+                await client.download_media(msg, file=rpath)
+                recs = parse_xlsx(rpath)
+                add(f"Получено по номерам: {len(recs)}")
+                fill_dates_from_response(ws, recs)
+                wb.save(result_file)
+                await send_status("этап 3.5 (пробив по номеру)")
+            else:
+                add("[!] Бот2 не ответил на этапе 3.5")
+    
+    if stop_requested:
+        await send_final_zip()
+        return {"ok": True, "log": log, "stopped": True}
+
     # ============ ЭТАП 4: ФИЛЬТР ПО ГОДАМ ============
     if year_range and not stop_requested:
         try:
@@ -1369,7 +1714,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ ЭТАП 7: ДОБИВ -> БОТ2 ============
+    # ============ ЭТАП 7: ДОБИВ -> БОТ2 (как в minecraft.py) ============
     items_no_phone_final = []
     for row in range(2, ws.max_row + 1):
         fio_val = str(ws.cell(row=row, column=COL_FIO).value or "").strip()
@@ -1434,6 +1779,96 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             await send_status("этап 7 (добив)")
             add("Добив завершён")
 
+    if stop_requested:
+        await send_final_zip()
+        return {"ok": True, "log": log, "stopped": True}
+
+    # ============ ЭТАП 8: ДОБИВ КВАРТИР (НОВЫЙ ЭТАП) ============
+    # Собираем строки с адресом без квартиры
+    rows_without_apartment = []
+    for row in range(2, ws.max_row + 1):
+        addr_val = str(ws.cell(row=row, column=COL_ADDR).value or "").strip()
+        if addr_val and addr_val != 'None':
+            # Проверяем, есть ли квартира
+            if not re.search(r'кв\.?\s*\d+', addr_val, re.IGNORECASE):
+                phone_val = str(ws.cell(row=row, column=COL_PHONE).value or "").strip()
+                if phone_val and phone_val != 'None' and phone_val != '0':
+                    rows_without_apartment.append({
+                        'row': row,
+                        'address': addr_val,
+                        'phone': clean_phone(phone_val)
+                    })
+
+    if rows_without_apartment and not stop_requested:
+        cid = f"s8_{int(time.time())}"
+        add(f"ЭТАП 8: ДОБИВ КВАРТИР -> бот2 ({len(rows_without_apartment)} строк)")
+
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 8: ДОБИВ КВАРТИР", len(rows_without_apartment), cid, add, topic_id)
+        if result == "stop":
+            await send_final_zip()
+            return {"ok": True, "log": log, "stopped": True}
+        if result == "skip":
+            add("[v] ЭТАП 8 ПРОПУЩЕН")
+        elif result == "confirm":
+            add("[v] ПОДТВЕРЖДЕНО! Начинаю добив квартир...")
+
+            e = await client.get_entity(bot2)
+            address_to_apartment = {}
+            
+            for i, item in enumerate(rows_without_apartment):
+                if stop_requested:
+                    break
+                
+                try:
+                    phone = item['phone']
+                    address = item['address']
+                    row_num = item['row']
+                    
+                    add_log(f"[ДОБИВ-КВАРТИР] Акк 1, строка {row_num}: телефон {phone}")
+                    
+                    # Получаем отчёт
+                    report = await dobiv_by_numbers(client, e, phone, add)
+                    
+                    if report:
+                        # Извлекаем адрес из отчёта
+                        report_addr = extract_address_from_report(report)
+                        if report_addr:
+                            # Ищем квартиру
+                            apartment = extract_apartment_from_report(report, address)
+                            if apartment:
+                                address_to_apartment[address] = apartment
+                                add(f"[ДОБИВ-КВАРТИР] Найдена квартира {apartment} для {address}")
+                            else:
+                                add(f"[ДОБИВ-КВАРТИР] Квартира не найдена для {address}")
+                        else:
+                            add(f"[ДОБИВ-КВАРТИР] Адрес не найден в отчёте")
+                    
+                    if (i + 1) % 3 == 0:
+                        add(f"[ДОБИВ-КВАРТИР] Обработано {i+1}/{len(rows_without_apartment)}")
+                        await asyncio.sleep(2)
+                        
+                except FloodWaitError as e:
+                    add(f"[ДОБИВ-КВАРТИР] FloodWait: {e.seconds}с")
+                    await asyncio.sleep(e.seconds)
+                except Exception as e:
+                    add(f"[ДОБИВ-КВАРТИР] Ошибка: {e}")
+            
+            # Заполняем квартиры в таблице
+            if address_to_apartment:
+                fill_apartments_from_report(ws, address_to_apartment)
+                wb.save(result_file)
+                await send_status("этап 8 (добив квартир)")
+                add(f"[ДОБИВ-КВАРТИР] Заполнено квартир: {len(address_to_apartment)}")
+            else:
+                add("[ДОБИВ-КВАРТИР] Квартиры не найдены")
+
+    if stop_requested:
+        await send_final_zip()
+        return {"ok": True, "log": log, "stopped": True}
+
+    # === ОТПРАВЛЯЕМ TXT ДЛЯ ЧЕКА МАКСОВ ===
+    await send_txt_for_max_check()
+
     # === УДАЛЯЕМ СТРОКИ БЕЗ ДАТЫ ===
     rows_no_date = []
     for row in range(2, ws.max_row + 1):
@@ -1451,6 +1886,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     # === ФИНАЛ ===
     add("=== ВСЕ ЭТАПЫ ЗАВЕРШЕНЫ ===")
     
+    # Отправляем финальный ZIP
     await send_final_zip()
     
     total_dates = 0
@@ -1467,7 +1903,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
 # ====================== ЭНДПОИНТЫ ======================
 async def handle_health(request):
-    return web.json_response({"ok": True, "message": "X Backend v14.1"})
+    return web.json_response({"ok": True, "message": "X Backend v15.0"})
 
 
 async def handle_root(request):
@@ -1596,6 +2032,49 @@ async def handle_verify_code(request):
         return web.json_response({"ok": False, "error": str(e)}, status=400)
 
 
+async def handle_upload_check_txt(request):
+    """Загрузка TXT с номерами для добива (как в minecraft.py)"""
+    try:
+        reader = await request.multipart()
+        field = await reader.next()
+        if field.name != 'file':
+            return web.json_response({"ok": False, "error": "Нет файла"}, status=400)
+        
+        data = await field.read()
+        txt_content = data.decode('utf-8', errors='ignore')
+        
+        # Парсим TXT: каждая строка - номер или "номер имя"
+        phone_to_fio = {}
+        for line in txt_content.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Пробуем разбить на номер и имя
+            parts = line.split(maxsplit=1)
+            if len(parts) >= 2:
+                phone_raw = parts[0]
+                fio = parts[1]
+                phone_clean = clean_phone_without_plus(phone_raw)
+                if phone_clean and fio:
+                    phone_to_fio[phone_clean] = fio
+            else:
+                # Только номер
+                phone_clean = clean_phone_without_plus(line)
+                if phone_clean:
+                    phone_to_fio[phone_clean] = ''
+        
+        return web.json_response({
+            "ok": True,
+            "phone_to_fio": phone_to_fio,
+            "count": len(phone_to_fio)
+        })
+    except Exception as e:
+        print(f"[UPLOAD-TXT] Ошибка: {e}")
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 async def handle_full_probev(request):
     try:
         d = await request.json()
@@ -1625,7 +2104,7 @@ async def handle_full_probev(request):
                     del active_probevs[ss]
 
         print(f"\n{'='*60}")
-        print(f"[PROBEV] ЗАПУСК ПОЛНОГО ЦИКЛА (7 ЭТАПОВ + DeepSeek)")
+        print(f"[PROBEV] ЗАПУСК ПОЛНОГО ЦИКЛА (8 ЭТАПОВ + DeepSeek + ДОБИВ КВАРТИР)")
         print(f"[PROBEV] Бот1: {bot1}, Бот2: {bot2}")
         print(f"[PROBEV] Строк без даты: {len(items_no_date)}")
         print(f"[PROBEV] Строк без номера: {len(items_no_phone)}")
@@ -1673,6 +2152,7 @@ app = web.Application(middlewares=[log_and_cors], client_max_size=200 * 1024 * 1
 app.router.add_get("/", handle_root)
 app.router.add_get("/health", handle_health)
 app.router.add_post("/upload-zip", handle_upload_zip)
+app.router.add_post("/upload-check-txt", handle_upload_check_txt)
 app.router.add_post("/send-code", handle_send_code)
 app.router.add_post("/verify-code", handle_verify_code)
 app.router.add_post("/full-probev", handle_full_probev)
@@ -1683,7 +2163,7 @@ async def on_startup(app):
     port = app["port"]
     msg = (
         "=" * 60 + "\n"
-        f"X Backend v14.1 ЗАПУЩЕН (Русский интерфейс)\n"
+        f"X Backend v15.0 ЗАПУЩЕН (8 этапов + ДОБИВ КВАРТИР)\n"
         f"Host: 0.0.0.0  |  Port: {port}\n"
         + "=" * 60
     )

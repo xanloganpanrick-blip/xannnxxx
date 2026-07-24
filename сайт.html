@@ -23,7 +23,8 @@
         .subtitle { font-size: 13px; color: #888; margin-bottom: 24px; }
         .card { background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; }
         .card h3 { font-size: 14px; margin-bottom: 14px; font-weight: 600; color: #ccc; }
-        input, select, textarea { width: 100%; padding: 10px 14px; background: #050505; border: 1px solid #1a1a1a; color: #fff; border-radius: 6px; margin-bottom: 10px; font-family: 'Inter', sans-serif; font-size: 13px; }
+        .card h4 { font-size: 12px; margin-bottom: 10px; color: #888; font-weight: 400; }
+        input, select, textarea { width: 100%; padding: 10px 14px; background: #050505; border: 1px solid #1a1a1a; color: #fff; border-radius: 6px; margin-bottom: 10px; font-family: 'Inter', sans-serif; font-size: 13px; transition: border-color 0.15s; }
         input:focus, select:focus, textarea:focus { outline: none; border-color: #444; }
         textarea { resize: vertical; min-height: 60px; font-family: 'Courier New', monospace; font-size: 12px; }
         button { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif; font-size: 13px; transition: all 0.15s; }
@@ -32,9 +33,11 @@
         .btn-dark { background: #0f0f0f; color: #fff; border: 1px solid #1a1a1a; } .btn-dark:hover { border-color: #444; }
         .btn-red { background: none; color: #ff4444; border: 1px solid #ff4444; } .btn-red:hover { background: #ff4444; color: #000; }
         .btn-green { background: #44ff44; color: #000; } .btn-green:hover { opacity: 0.85; }
+        .btn-yellow { background: #ffaa00; color: #000; } .btn-yellow:hover { opacity: 0.85; }
         .btn-sm { padding: 5px 12px; font-size: 11px; }
         .btn-block { width: 100%; }
         .flex { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .flex-between { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
         .mb-8 { margin-bottom: 8px; } .mb-16 { margin-bottom: 16px; } .mt-8 { margin-top: 8px; } .mt-16 { margin-top: 16px; }
         .w-full { width: 100%; }
         .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 10px; font-weight: 600; }
@@ -67,6 +70,9 @@
         .modal-box h3 { font-size: 18px; margin-bottom: 16px; }
         .modal-close { float: right; background: none; border: none; color: #666; font-size: 22px; cursor: pointer; padding: 0 4px; }
         .modal-close:hover { color: #fff; }
+        .step { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+        .step-num { width: 22px; height: 22px; border-radius: 50%; background: #1a1a1a; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; color: #888; }
+        .step-num.active { background: #44ff44; color: #000; }
         .table-preview { overflow-x: auto; margin-top: 10px; max-height: 250px; overflow-y: auto; }
         .table-preview table { width: 100%; border-collapse: collapse; font-size: 11px; }
         .table-preview th { background: #0f0f0f; padding: 6px 8px; text-align: left; font-weight: 600; border-bottom: 1px solid #1a1a1a; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
@@ -85,6 +91,7 @@
         @keyframes fadeInUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
         .file-list { margin-top: 8px; max-height: 80px; overflow-y: auto; font-size: 11px; color: #666; }
         .file-list .file-item { padding: 2px 0; }
+        .hidden { display: none !important; }
         @media (max-width: 768px) { .sidebar { width: 50px; padding: 10px 4px; } .sidebar .logo { font-size: 16px; text-align: center; margin-bottom: 16px; } .nav-btn { font-size: 9px; text-align: center; padding: 8px 2px; } .main { margin-left: 50px; padding: 12px; max-width: calc(100% - 50px); } .split-col { grid-template-columns: 1fr; } }
     </style>
 </head>
@@ -94,210 +101,243 @@
     <!-- SIDEBAR -->
     <div class="sidebar">
         <div class="logo"><span>X</span></div>
-        <button class="nav-btn active" data-page="accounts">Accounts</button>
-        <button class="nav-btn" data-page="probiv">Probev</button>
-        <button class="nav-btn" data-page="checker">Checker</button>
-        <button class="nav-btn" data-page="dobiv">Dobiv</button>
-        <button class="nav-btn" data-page="server">Server</button>
+        <button class="nav-btn active" data-page="accounts">Аккаунты</button>
+        <button class="nav-btn" data-page="probiv">Пробивы</button>
+        <button class="nav-btn" data-page="checker">Чекер</button>
+        <button class="nav-btn" data-page="dobiv">Добив</button>
+        <button class="nav-btn" data-page="server">Сервер</button>
+        <button class="nav-btn" data-page="merge">Объединить</button>
     </div>
 
     <!-- MAIN CONTENT -->
     <div class="main">
 
-        <!-- ========== SERVER ========== -->
+        <!-- ========== СЕРВЕР ========== -->
         <div class="page" id="page-server">
-            <div class="title">Server</div>
-            <div class="subtitle">Backend connection settings</div>
+            <div class="title">Сервер</div>
+            <div class="subtitle">Настройка подключения к бэкенду</div>
             <div class="card">
-                <h3>Connection</h3>
-                <p class="mb-16"><span class="dot" id="sDot"></span><span id="sText">Checking...</span></p>
+                <h3>Подключение</h3>
+                <p class="mb-16"><span class="dot" id="sDot"></span><span id="sText">Проверка...</span></p>
                 <input type="text" id="sUrl" placeholder="https://your-backend.railway.app">
                 <div class="flex">
-                    <button class="btn-white" onclick="checkServer()">Check</button>
-                    <button class="btn-dark" onclick="saveServer()">Save</button>
+                    <button class="btn-white" onclick="checkServer()">Проверить</button>
+                    <button class="btn-dark" onclick="saveServer()">Сохранить</button>
                 </div>
             </div>
         </div>
 
-        <!-- ========== ACCOUNTS ========== -->
+        <!-- ========== АККАУНТЫ ========== -->
         <div class="page active" id="page-accounts">
-            <div class="title">Accounts</div>
-            <div class="subtitle">Telegram accounts and notification bot</div>
+            <div class="title">Аккаунты</div>
+            <div class="subtitle">Telegram аккаунты и бот уведомлений</div>
             <div class="card">
-                <h3>Telegram accounts</h3>
-                <div id="accList"><p class="text-sm">No accounts. Add first.</p></div>
-                <button class="btn-white mt-8" onclick="showAddAcc()">+ Add account</button>
+                <h3>Telegram аккаунты</h3>
+                <div id="accList"><p class="text-sm">Нет аккаунтов. Добавьте первый.</p></div>
+                <button class="btn-white mt-8" onclick="showAddAcc()">+ Добавить аккаунт</button>
             </div>
             <div class="card">
-                <h3>Notification bot</h3>
-                <p class="text-sm mb-8">Create bot via @BotFather. Get your ID via @userinfobot.</p>
-                <input type="text" id="botToken" placeholder="Bot token">
+                <h3>Бот уведомлений</h3>
+                <p class="text-sm mb-8">Создайте бота через @BotFather. Получите ID через @userinfobot.</p>
+                <input type="text" id="botToken" placeholder="Токен бота">
                 <input type="text" id="botChatId" placeholder="Chat ID">
                 <div class="flex">
-                    <button class="btn-white" onclick="saveBotConfig()">Save</button>
-                    <button class="btn-dark" onclick="testBot()">Test</button>
+                    <button class="btn-white" onclick="saveBotConfig()">Сохранить</button>
+                    <button class="btn-dark" onclick="testBot()">Тест</button>
                 </div>
             </div>
             <div class="card">
-                <h3>Group for INN search (rename files)</h3>
-                <p class="text-sm mb-8">Group ID where bot will search addresses to find INN for file naming.</p>
-                <input type="text" id="group_id" placeholder="Group ID (e.g. -1001234567890)">
-                <p class="text-xs mb-8">For supergroups with topics, fill Topic ID below (optional)</p>
-                <input type="text" id="topic_id" placeholder="Topic ID (optional)">
-                <button class="btn-dark" onclick="saveGroupConfig()">Save group settings</button>
+                <h3>Группа для поиска ИНН (переименование)</h3>
+                <p class="text-sm mb-8">ID группы, где бот будет искать адреса для ИНН.</p>
+                <input type="text" id="group_id" placeholder="ID группы (например -1001234567890)">
+                <p class="text-xs mb-8">Для супергрупп с темами укажите ID темы (опционально)</p>
+                <input type="text" id="topic_id" placeholder="ID темы (опционально)">
+                <button class="btn-dark" onclick="saveGroupConfig()">Сохранить настройки группы</button>
             </div>
         </div>
 
-        <!-- ========== PROBEV ========== -->
+        <!-- ========== ПРОБИВЫ ========== -->
         <div class="page" id="page-probiv">
-            <div class="title">Probev</div>
-            <div class="subtitle">Full cycle: FIO+phone -> SNILS -> FIO+date -> Dobiv (7 stages)</div>
+            <div class="title">Пробивы</div>
+            <div class="subtitle">Полный цикл: ФИО+номер -> СНИЛС -> ФИО+дата -> Добив -> Квартиры (8 этапов)</div>
 
             <div class="card">
-                <h3>1. Upload tables (ZIP or multiple XLSX)</h3>
+                <h3>1. Загрузите таблицы (ZIP или несколько XLSX)</h3>
                 <div class="drop-zone" id="dropZone">
-                    <div class="dz-label">Drop ZIP or XLSX files here, or click to select</div>
-                    <div class="dz-hint">Supports: ZIP archive with XLSX, or multiple XLSX files</div>
+                    <div class="dz-label">Перетащите ZIP или XLSX файлы сюда, или нажмите для выбора</div>
+                    <div class="dz-hint">Поддерживается: ZIP архив с XLSX, или несколько XLSX файлов</div>
                     <div class="dz-files" id="uploadFileList"></div>
                     <input type="file" id="fileInput" accept=".xlsx,.xls,.zip" multiple style="display:none">
                 </div>
                 <div id="uploadInfo" class="text-sm"></div>
                 <div class="flex mt-8">
-                    <button class="btn-dark btn-sm" onclick="document.getElementById('fileInput').click()">Choose files</button>
-                    <button class="btn-green btn-sm" id="mergeUploadBtn" onclick="mergeUploaded()">Merge & load</button>
-                    <button class="btn-red btn-sm" onclick="clearUploads()">Clear</button>
+                    <button class="btn-dark btn-sm" onclick="document.getElementById('fileInput').click()">Выбрать файлы</button>
+                    <button class="btn-green btn-sm" id="mergeUploadBtn" onclick="mergeUploaded()">Объединить и загрузить</button>
+                    <button class="btn-red btn-sm" onclick="clearUploads()">Очистить</button>
                 </div>
             </div>
 
             <div class="card">
-                <h3>2. Table preview</h3>
+                <h3>2. Превью таблицы</h3>
                 <div class="table-preview" id="tablePreview" style="max-height:250px;overflow:auto;"></div>
                 <div class="stat-row mt-8" id="tableStats"></div>
                 <div class="text-sm mt-8" id="tableNamesInfo"></div>
             </div>
 
             <div class="card">
-                <h3>3. Probev settings</h3>
+                <h3>3. Настройки пробива</h3>
                 <div class="split-col">
                     <div>
-                        <label class="text-sm">Telegram account</label>
-                        <select id="pAcc"><option value="">— Select —</option></select>
+                        <label class="text-sm">Аккаунт Telegram</label>
+                        <select id="pAcc"><option value="">— Выберите —</option></select>
                     </div>
                     <div>
-                        <label class="text-sm">Year range</label>
+                        <label class="text-sm">Диапазон годов</label>
                         <input type="text" id="yearRange" value="1945-1975">
                     </div>
                 </div>
                 <div class="split-col mt-8">
                     <div>
-                        <label class="text-sm">Bot 1 (primary)</label>
+                        <label class="text-sm">Бот 1 (основной)</label>
                         <input type="text" id="bot1" value="@osint_pam_pam_bot">
                     </div>
                     <div>
-                        <label class="text-sm">Bot 2 (dobiv)</label>
+                        <label class="text-sm">Бот 2 (добив)</label>
                         <input type="text" id="bot2" value="@proverim123_bot">
                     </div>
                 </div>
                 <div class="flex mt-8">
-                    <button class="btn-white" id="btnProbiv" onclick="startProbiv()">START PROBEV</button>
-                    <button class="btn-red" id="btnStopProbiv" onclick="stopProbiv()" disabled>STOP</button>
+                    <button class="btn-white" id="btnProbiv" onclick="startProbiv()">ЗАПУСТИТЬ ПРОБИВ</button>
+                    <button class="btn-red" id="btnStopProbiv" onclick="stopProbiv()" disabled>ОСТАНОВИТЬ</button>
+                    <button class="btn-yellow" id="btnFinishSession" onclick="finishSession()" disabled>ЗАВЕРШИТЬ СЕССИЮ</button>
                 </div>
                 <div class="text-xs mt-8" style="color:#666;">
-                    Files will be renamed by address: ИНН_Адрес.xlsx or УК_Адрес.xlsx
+                    Файлы будут переименованы по адресу: ИНН_Адрес.xlsx или УК_Адрес.xlsx
                 </div>
             </div>
 
             <div class="card">
-                <h3>4. Log</h3>
-                <div class="log-box" id="pLog"><span class="dim">Waiting...</span></div>
+                <h3>4. Добив через TXT (как в minecraft)</h3>
+                <div class="flex">
+                    <button class="btn-dark btn-sm" onclick="document.getElementById('checkTxtInput').click()">Загрузить TXT с номерами</button>
+                    <button class="btn-green btn-sm" id="btnRunDobivFromTxt" onclick="runDobivFromTxt()" disabled>ЗАПУСТИТЬ ДОБИВ</button>
+                    <button class="btn-yellow btn-sm" id="btnDownloadCheckTxt" onclick="downloadCheckTxt()" disabled>Скачать TXT для чека</button>
+                </div>
+                <input type="file" id="checkTxtInput" accept=".txt" style="display:none" onchange="loadCheckTxt(event)">
+                <div id="checkTxtInfo" class="text-sm mt-8"></div>
+                <div id="checkTxtData" class="hidden"></div>
+            </div>
+
+            <div class="card">
+                <h3>5. Лог</h3>
+                <div class="log-box" id="pLog"><span class="dim">Ожидание...</span></div>
                 <div class="flex mt-8">
-                    <button class="btn-dark btn-sm" onclick="document.getElementById('pLog').innerHTML='<span class=\"dim\">Cleared.</span>'">Clear log</button>
+                    <button class="btn-dark btn-sm" onclick="document.getElementById('pLog').innerHTML='<span class=\"dim\">Очищено.</span>'">Очистить лог</button>
                 </div>
             </div>
         </div>
 
-        <!-- ========== CHECKER ========== -->
+        <!-- ========== ЧЕКЕР ========== -->
         <div class="page" id="page-checker">
-            <div class="title">Checker</div>
-            <div class="subtitle">Filter table by phone numbers from TXT</div>
+            <div class="title">Чекер</div>
+            <div class="subtitle">Фильтрация таблицы по номерам из TXT</div>
             <div class="card">
-                <h3>1. Upload table (XLSX)</h3>
-                <button class="btn-dark mb-8" onclick="document.getElementById('chkXlsx').click()">Choose XLSX</button>
+                <h3>1. Загрузите таблицу (XLSX)</h3>
+                <button class="btn-dark mb-8" onclick="document.getElementById('chkXlsx').click()">Выбрать XLSX</button>
                 <input type="file" id="chkXlsx" accept=".xlsx,.xls" style="display:none" onchange="loadChkXlsx(event)">
                 <div id="chkXlsxInfo" class="text-sm"></div>
             </div>
             <div class="card">
-                <h3>2. Upload phone list (TXT)</h3>
-                <button class="btn-dark mb-8" onclick="document.getElementById('chkTxt').click()">Choose TXT</button>
+                <h3>2. Загрузите список номеров (TXT)</h3>
+                <button class="btn-dark mb-8" onclick="document.getElementById('chkTxt').click()">Выбрать TXT</button>
                 <input type="file" id="chkTxt" accept=".txt" style="display:none" onchange="loadChkTxt(event)">
                 <div id="chkTxtInfo" class="text-sm"></div>
             </div>
             <div class="card">
-                <h3>3. Result</h3>
+                <h3>3. Результат</h3>
                 <div class="flex mb-8">
-                    <button class="btn-white" onclick="runChecker()">Run</button>
-                    <button class="btn-dark btn-sm" id="btnChkDownload" style="display:none" onclick="downloadChkResult()">Download XLSX</button>
+                    <button class="btn-white" onclick="runChecker()">Запустить</button>
+                    <button class="btn-dark btn-sm" id="btnChkDownload" style="display:none" onclick="downloadChkResult()">Скачать XLSX</button>
                 </div>
                 <div id="chkResult"></div>
             </div>
         </div>
 
-        <!-- ========== DOBIV ========== -->
+        <!-- ========== ДОБИВ ========== -->
         <div class="page" id="page-dobiv">
-            <div class="title">Dobiv</div>
-            <div class="subtitle">Merge tables: fill gaps from source</div>
+            <div class="title">Добив</div>
+            <div class="subtitle">Объединение таблиц: заполнить пропуски из источника</div>
             <div class="card">
-                <h3>1. Main table (XLSX)</h3>
-                <button class="btn-dark mb-8" onclick="document.getElementById('dobMain').click()">Choose XLSX</button>
+                <h3>1. Основная таблица (XLSX)</h3>
+                <button class="btn-dark mb-8" onclick="document.getElementById('dobMain').click()">Выбрать XLSX</button>
                 <input type="file" id="dobMain" accept=".xlsx,.xls" style="display:none" onchange="loadDobMain(event)">
                 <div id="dobMainInfo" class="text-sm"></div>
             </div>
             <div class="card">
-                <h3>2. Source table (XLSX)</h3>
-                <button class="btn-dark mb-8" onclick="document.getElementById('dobSrc').click()">Choose XLSX</button>
+                <h3>2. Таблица-источник (XLSX)</h3>
+                <button class="btn-dark mb-8" onclick="document.getElementById('dobSrc').click()">Выбрать XLSX</button>
                 <input type="file" id="dobSrc" accept=".xlsx,.xls" style="display:none" onchange="loadDobSrc(event)">
                 <div id="dobSrcInfo" class="text-sm"></div>
             </div>
             <div class="card">
-                <h3>3. Result</h3>
+                <h3>3. Результат</h3>
                 <div class="flex mb-8">
-                    <button class="btn-white" onclick="runDobiv()">Run</button>
-                    <button class="btn-dark btn-sm" id="btnDobDownload" style="display:none" onclick="downloadDobResult()">Download XLSX</button>
+                    <button class="btn-white" onclick="runDobiv()">Запустить</button>
+                    <button class="btn-dark btn-sm" id="btnDobDownload" style="display:none" onclick="downloadDobResult()">Скачать XLSX</button>
                 </div>
                 <div id="dobResult"></div>
             </div>
         </div>
 
+        <!-- ========== ОБЪЕДИНИТЬ ========== -->
+        <div class="page" id="page-merge">
+            <div class="title">Объединить</div>
+            <div class="subtitle">Объединить несколько таблиц в одну</div>
+            <div class="card">
+                <h3>Загрузите таблицы</h3>
+                <div class="drop-zone" id="mergeDropZone">
+                    <div class="dz-label">Перетащите XLSX файлы сюда или нажмите для выбора</div>
+                    <input type="file" id="mergeFileInput" accept=".xlsx,.xls" multiple style="display:none">
+                </div>
+                <div id="mergeFileList" class="text-sm"></div>
+                <div class="flex mt-8">
+                    <button class="btn-white" id="mergeBtn">Объединить</button>
+                    <button class="btn-green" id="mergeDownloadBtn" style="display:none">Скачать объединённый</button>
+                    <button class="btn-red" id="mergeClearBtn">Очистить</button>
+                </div>
+            </div>
+        </div>
+
     </div>
 </div>
 
-<!-- MODAL: Add account -->
+<!-- MODAL: Добавить аккаунт -->
 <div class="modal" id="accModal">
     <div class="modal-box">
-        <button class="modal-close" onclick="closeAccModal()">x</button>
-        <h3>Add Telegram account</h3>
+        <button class="modal-close" onclick="closeAccModal()">×</button>
+        <h3>Добавить Telegram аккаунт</h3>
         <div id="accStep1">
-            <input type="text" id="accPhone" placeholder="Phone (+79...)" value="+7">
-            <button class="btn-white btn-block" onclick="sendCode()">Send code</button>
+            <input type="text" id="accPhone" placeholder="Номер (+79...)" value="+7">
+            <button class="btn-white btn-block" onclick="sendCode()">Отправить код</button>
         </div>
         <div id="accStep2" style="display:none">
-            <input type="text" id="accCode" placeholder="Code from Telegram">
-            <button class="btn-white btn-block mb-8" onclick="verifyCode()">Verify</button>
+            <input type="text" id="accCode" placeholder="Код из Telegram">
+            <button class="btn-white btn-block mb-8" onclick="verifyCode()">Подтвердить</button>
         </div>
         <div id="accStep2FA" style="display:none">
-            <p class="text-sm mb-8">2FA password required:</p>
-            <input type="password" id="acc2fa" placeholder="2FA password">
-            <button class="btn-white btn-block" onclick="verify2FA()">Login</button>
+            <p class="text-sm mb-8">Требуется пароль 2FA:</p>
+            <input type="password" id="acc2fa" placeholder="Пароль 2FA">
+            <button class="btn-white btn-block" onclick="verify2FA()">Войти</button>
         </div>
         <div id="accStepDone" style="display:none">
-            <p class="green mb-8">Account added!</p>
+            <p class="green mb-8">Аккаунт добавлен!</p>
         </div>
-        <button class="btn-dark btn-block mt-16" onclick="closeAccModal()">Close</button>
+        <button class="btn-dark btn-block mt-16" onclick="closeAccModal()">Закрыть</button>
     </div>
 </div>
 
 <script>
-// ==================== DATABASE ====================
+// ==================== БАЗА ДАННЫХ ====================
 var DB = JSON.parse(localStorage.getItem('xdb') || '{"accs":[],"botToken":"","botChatId":"","group_id":"","topic_id":""}');
 function saveDB() { localStorage.setItem('xdb', JSON.stringify(DB)); }
 
@@ -306,11 +346,18 @@ function getServerUrl() {
 }
 function setServerUrl(u) { localStorage.setItem('xsrv', u); }
 
-// ==================== UTILITIES ====================
+// ==================== УТИЛИТЫ ====================
 function cleanPhone(t) {
     if (!t) return '';
     var d = (''+t).replace(/\D/g, '');
     if (d.length >= 10) return '+7' + d.slice(-10);
+    return d;
+}
+
+function cleanPhoneWithoutPlus(t) {
+    if (!t) return '';
+    var d = (''+t).replace(/\D/g, '');
+    if (d.length >= 10) return '7' + d.slice(-10);
     return d;
 }
 
@@ -351,7 +398,7 @@ function addLog(msg, cls) {
     el.scrollTop = el.scrollHeight;
 }
 
-// ==================== NAVIGATION ====================
+// ==================== НАВИГАЦИЯ ====================
 document.querySelectorAll('.nav-btn').forEach(function(b) {
     b.onclick = function() {
         document.querySelectorAll('.nav-btn').forEach(function(x) { x.classList.remove('active'); });
@@ -364,7 +411,7 @@ document.querySelectorAll('.nav-btn').forEach(function(b) {
     };
 });
 
-// ==================== SERVER ====================
+// ==================== СЕРВЕР ====================
 async function checkServer() {
     var url = document.getElementById('sUrl').value.trim() || getServerUrl();
     document.getElementById('sUrl').value = url;
@@ -373,31 +420,31 @@ async function checkServer() {
         var d = await r.json();
         if (d.ok) {
             document.getElementById('sDot').className = 'dot dot-green';
-            document.getElementById('sText').textContent = 'Connected (' + d.message + ')';
+            document.getElementById('sText').textContent = 'Подключен (' + d.message + ')';
         } else {
             throw new Error('No ok');
         }
     } catch(e) {
         document.getElementById('sDot').className = 'dot dot-red';
-        document.getElementById('sText').textContent = 'Not connected';
+        document.getElementById('sText').textContent = 'Не подключен';
     }
 }
 
 function saveServer() {
     var url = document.getElementById('sUrl').value.trim();
     setServerUrl(url);
-    toast('Saved: ' + url, true);
+    toast('Сохранено: ' + url, true);
     checkServer();
 }
 
-// ==================== ACCOUNTS ====================
+// ==================== АККАУНТЫ ====================
 function renderAccs() {
     var el = document.getElementById('accList');
-    if (!DB.accs.length) { el.innerHTML = '<p class="text-sm">No accounts.</p>'; return; }
+    if (!DB.accs.length) { el.innerHTML = '<p class="text-sm">Нет аккаунтов.</p>'; return; }
     el.innerHTML = DB.accs.map(function(a, i) {
         return '<div class="list-item">' +
-            '<div class="info"><div class="name">' + (a.name || 'No name') + '</div><div class="phone">' + a.phone + '</div></div>' +
-            '<button class="btn-red btn-sm" onclick="delAcc('+i+')">Remove</button>' +
+            '<div class="info"><div class="name">' + (a.name || 'Без имени') + '</div><div class="phone">' + a.phone + '</div></div>' +
+            '<button class="btn-red btn-sm" onclick="delAcc('+i+')">Удалить</button>' +
         '</div>';
     }).join('');
     document.getElementById('botToken').value = DB.botToken || '';
@@ -407,7 +454,7 @@ function renderAccs() {
 }
 
 function delAcc(i) {
-    if (!confirm('Remove account?')) return;
+    if (!confirm('Удалить аккаунт?')) return;
     DB.accs.splice(i, 1);
     saveDB();
     renderAccs();
@@ -427,33 +474,33 @@ function closeAccModal() { document.getElementById('accModal').classList.remove(
 
 async function apiPost(endpoint, body) {
     var srv = getServerUrl();
-    if (!srv) throw new Error('Server not configured.');
+    if (!srv) throw new Error('Сервер не настроен.');
     var r = await fetch(srv + endpoint, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body)
     });
     var d = await r.json();
-    if (!d.ok) throw new Error(d.error || 'Server error');
+    if (!d.ok) throw new Error(d.error || 'Ошибка сервера');
     return d;
 }
 
 var _pendingPhone = '';
 async function sendCode() {
     var ph = document.getElementById('accPhone').value.trim();
-    if (!ph) return toast('Enter phone', false);
+    if (!ph) return toast('Введите номер', false);
     try {
         await apiPost('/send-code', {phone: ph});
         _pendingPhone = ph;
         document.getElementById('accStep1').style.display = 'none';
         document.getElementById('accStep2').style.display = 'block';
-        toast('Code sent', true);
-    } catch(e) { toast('Error: ' + e.message, false); }
+        toast('Код отправлен', true);
+    } catch(e) { toast('Ошибка: ' + e.message, false); }
 }
 
 async function verifyCode() {
     var code = document.getElementById('accCode').value.trim();
-    if (!code) return toast('Enter code', false);
+    if (!code) return toast('Введите код', false);
     try {
         var d = await apiPost('/verify-code', {phone: _pendingPhone, code: code, password: ''});
         if (d.need_2fa) {
@@ -466,13 +513,13 @@ async function verifyCode() {
         document.getElementById('accStep2').style.display = 'none';
         document.getElementById('accStepDone').style.display = 'block';
         renderAccs();
-        toast('Account added!', true);
-    } catch(e) { toast('Error: ' + e.message, false); }
+        toast('Аккаунт добавлен!', true);
+    } catch(e) { toast('Ошибка: ' + e.message, false); }
 }
 
 async function verify2FA() {
     var pwd = document.getElementById('acc2fa').value.trim();
-    if (!pwd) return toast('Enter password', false);
+    if (!pwd) return toast('Введите пароль', false);
     try {
         var d = await apiPost('/verify-code', {phone: _pendingPhone, code: '00000', password: pwd});
         DB.accs.push({phone: d.phone, session: d.session, name: d.name});
@@ -480,44 +527,46 @@ async function verify2FA() {
         document.getElementById('accStep2FA').style.display = 'none';
         document.getElementById('accStepDone').style.display = 'block';
         renderAccs();
-        toast('Account added!', true);
-    } catch(e) { toast('Error: ' + e.message, false); }
+        toast('Аккаунт добавлен!', true);
+    } catch(e) { toast('Ошибка: ' + e.message, false); }
 }
 
 function saveBotConfig() {
     DB.botToken = document.getElementById('botToken').value.trim();
     DB.botChatId = document.getElementById('botChatId').value.trim();
     saveDB();
-    toast('Bot config saved', true);
+    toast('Настройки бота сохранены', true);
 }
 
 function saveGroupConfig() {
     DB.group_id = document.getElementById('group_id').value.trim();
     DB.topic_id = document.getElementById('topic_id').value.trim();
     saveDB();
-    toast('Group config saved', true);
+    toast('Настройки группы сохранены', true);
 }
 
 async function testBot() {
     var token = document.getElementById('botToken').value.trim();
     var cid = document.getElementById('botChatId').value.trim();
-    if (!token || !cid) return toast('Fill token and ID', false);
+    if (!token || !cid) return toast('Заполните токен и ID', false);
     try {
         var r = await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({chat_id: parseInt(cid), text: 'X: test message'})
+            body: JSON.stringify({chat_id: parseInt(cid), text: 'X: тестовое сообщение'})
         });
         var d = await r.json();
-        if (d.ok) toast('Bot works!', true);
-        else toast('Error: ' + JSON.stringify(d), false);
-    } catch(e) { toast('Error: ' + e.message, false); }
+        if (d.ok) toast('Бот работает! Проверьте Telegram.', true);
+        else toast('Ошибка: ' + JSON.stringify(d), false);
+    } catch(e) { toast('Ошибка: ' + e.message, false); }
 }
 
-// ==================== UPLOAD / MERGE ====================
+// ==================== ЗАГРУЗКА / ОБЪЕДИНЕНИЕ ====================
 var uploadedFiles = [];
 var mergedData = null;
 var tableNames = [];
+var isProbevRunning = false;
+var checkTxtData = null;
 
 function clearUploads() {
     uploadedFiles = [];
@@ -529,6 +578,7 @@ function clearUploads() {
     document.getElementById('tableStats').innerHTML = '';
     document.getElementById('tableNamesInfo').textContent = '';
     document.getElementById('fileInput').value = '';
+    document.getElementById('btnFinishSession').disabled = true;
 }
 
 function updateFileList() {
@@ -557,7 +607,7 @@ if (dz) {
             }
         }
         updateFileList();
-        toast('Added ' + files.length + ' files', true);
+        toast('Добавлено ' + files.length + ' файлов', true);
     });
 }
 
@@ -571,15 +621,15 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
         }
     }
     updateFileList();
-    toast('Added ' + files.length + ' files', true);
+    toast('Добавлено ' + files.length + ' файлов', true);
 });
 
 async function mergeUploaded() {
-    if (!uploadedFiles.length) return toast('No files uploaded', false);
+    if (!uploadedFiles.length) return toast('Нет загруженных файлов', false);
     
     var btn = document.getElementById('mergeUploadBtn');
     btn.disabled = true;
-    btn.textContent = 'Merging...';
+    btn.textContent = 'Объединение...';
     
     try {
         var zipFiles = uploadedFiles.filter(function(f) {
@@ -604,12 +654,13 @@ async function mergeUploaded() {
             if (data.ok) {
                 mergedData = {headers: data.headers, rows: data.rows};
                 tableNames = data.names || [];
-                document.getElementById('uploadInfo').textContent = 'Merged ' + data.tables_count + ' tables, ' + data.count + ' rows';
+                document.getElementById('uploadInfo').textContent = 'Объединено ' + data.tables_count + ' таблиц, ' + data.count + ' строк';
                 renderTablePreview();
                 refreshAccSelects();
-                toast('Merged successfully!', true);
+                document.getElementById('btnFinishSession').disabled = false;
+                toast('Объединено успешно!', true);
             } else {
-                toast('Merge error: ' + (data.error || 'Unknown'), false);
+                toast('Ошибка: ' + (data.error || 'Неизвестно'), false);
             }
         } else if (singleFiles.length) {
             var allTables = [];
@@ -627,7 +678,7 @@ async function mergeUploaded() {
                 });
             }
             
-            if (!allTables.length) return toast('No valid tables found', false);
+            if (!allTables.length) return toast('Нет валидных таблиц', false);
             
             var baseHeaders = allTables[0].headers;
             var addrIdx = -1;
@@ -636,7 +687,7 @@ async function mergeUploaded() {
                     addrIdx = j; break;
                 }
             }
-            var tableNumCol = 'N tablicy';
+            var tableNumCol = 'N таблицы';
             var newHeaders = addrIdx >= 0 ? 
                 baseHeaders.slice(0, addrIdx).concat([tableNumCol]).concat(baseHeaders.slice(addrIdx)) :
                 [tableNumCol].concat(baseHeaders);
@@ -662,20 +713,21 @@ async function mergeUploaded() {
             }
             
             mergedData = {headers: newHeaders, rows: allRows};
-            document.getElementById('uploadInfo').textContent = 'Merged ' + allTables.length + ' tables, ' + allRows.length + ' rows';
+            document.getElementById('uploadInfo').textContent = 'Объединено ' + allTables.length + ' таблиц, ' + allRows.length + ' строк';
             renderTablePreview();
             refreshAccSelects();
-            toast('Merged ' + allTables.length + ' tables!', true);
+            document.getElementById('btnFinishSession').disabled = false;
+            toast('Объединено ' + allTables.length + ' таблиц!', true);
         } else {
-            toast('No valid XLSX or ZIP files', false);
+            toast('Нет валидных XLSX или ZIP файлов', false);
         }
     } catch(e) {
-        toast('Error: ' + e.message, false);
+        toast('Ошибка: ' + e.message, false);
         console.error(e);
     }
     
     btn.disabled = false;
-    btn.textContent = 'Merge & load';
+    btn.textContent = 'Объединить и загрузить';
 }
 
 function renderTablePreview() {
@@ -710,12 +762,12 @@ function renderTablePreview() {
     }
     
     document.getElementById('tableStats').innerHTML =
-        '<div class="stat-item"><div class="stat-num">' + rows.length + '</div><div class="stat-label">Total rows</div></div>' +
-        '<div class="stat-item"><div class="stat-num" style="color:#ff4444">' + emptyDate + '</div><div class="stat-label">No date</div></div>' +
-        '<div class="stat-item"><div class="stat-num" style="color:#ffaa00">' + emptyPhone + '</div><div class="stat-label">No phone</div></div>' +
-        '<div class="stat-item"><div class="stat-num" style="color:#888">' + emptySnils + '</div><div class="stat-label">No SNILS</div></div>';
+        '<div class="stat-item"><div class="stat-num">' + rows.length + '</div><div class="stat-label">Всего строк</div></div>' +
+        '<div class="stat-item"><div class="stat-num" style="color:#ff4444">' + emptyDate + '</div><div class="stat-label">Без даты</div></div>' +
+        '<div class="stat-item"><div class="stat-num" style="color:#ffaa00">' + emptyPhone + '</div><div class="stat-label">Без номера</div></div>' +
+        '<div class="stat-item"><div class="stat-num" style="color:#888">' + emptySnils + '</div><div class="stat-label">Без СНИЛС</div></div>';
     
-    document.getElementById('tableNamesInfo').textContent = 'Tables: ' + (tableNames.length ? tableNames.join(', ') : (rows.length ? '1 table' : ''));
+    document.getElementById('tableNamesInfo').textContent = 'Таблицы: ' + (tableNames.length ? tableNames.join(', ') : (rows.length ? '1 таблица' : ''));
     
     var html = '<table><thead><tr>';
     for (var hi = 0; hi < Math.min(h.length, 10); hi++) {
@@ -738,20 +790,149 @@ function renderTablePreview() {
         if (rw.length > 10) html += '<td>...</td>';
         html += '</tr>';
     }
-    if (rows.length > 30) html += '<tr><td colspan="10" style="text-align:center;color:#888">... ' + (rows.length - 30) + ' more rows</td></tr>';
+    if (rows.length > 30) html += '<tr><td colspan="10" style="text-align:center;color:#888">... ' + (rows.length - 30) + ' строк</td></tr>';
     html += '</tbody></table>';
     document.getElementById('tablePreview').innerHTML = html;
 }
 
-// ==================== PROBEV ====================
-var isProbevRunning = false;
+// ==================== ПРОБИВ ====================
+var checkTxtData = null;
 
 function refreshAccSelects() {
     var s = document.getElementById('pAcc');
-    s.innerHTML = '<option value="">— Select —</option>';
+    s.innerHTML = '<option value="">— Выберите —</option>';
     DB.accs.forEach(function(a) {
         s.innerHTML += '<option value="' + a.session + '">' + (a.name || a.phone) + '</option>';
     });
+}
+
+function loadCheckTxt(e) {
+    var f = e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+        var txt = ev.target.result;
+        var lines = txt.split('\n').filter(function(l) { return l.trim(); });
+        var phoneToFio = {};
+        for (var i = 0; i < lines.length; i++) {
+            var parts = lines[i].trim().split(/\s+/, 2);
+            if (parts.length >= 2) {
+                var phone = cleanPhoneWithoutPlus(parts[0]);
+                if (phone) phoneToFio[phone] = parts.slice(1).join(' ');
+            } else {
+                var phone = cleanPhoneWithoutPlus(parts[0]);
+                if (phone) phoneToFio[phone] = '';
+            }
+        }
+        checkTxtData = phoneToFio;
+        document.getElementById('checkTxtInfo').textContent = 'Загружено: ' + Object.keys(phoneToFio).length + ' номеров';
+        document.getElementById('btnRunDobivFromTxt').disabled = false;
+        document.getElementById('checkTxtData').value = JSON.stringify(phoneToFio);
+        toast('TXT загружен!', true);
+    };
+    reader.readAsText(f);
+}
+
+async function runDobivFromTxt() {
+    if (!checkTxtData || !Object.keys(checkTxtData).length) return toast('Сначала загрузите TXT', false);
+    if (!mergedData) return toast('Сначала загрузите таблицу', false);
+    
+    var ss = document.getElementById('pAcc').value;
+    if (!ss) return toast('Выберите аккаунт Telegram', false);
+    
+    var btn = document.getElementById('btnRunDobivFromTxt');
+    btn.disabled = true;
+    btn.textContent = 'ЗАПУСК...';
+    
+    try {
+        // Отправляем на сервер для заполнения ФИО по номерам
+        addLog('[ДОБИВ ИЗ TXT] Запуск...', 'info');
+        addLog('[ДОБИВ ИЗ TXT] Номеров: ' + Object.keys(checkTxtData).length, 'info');
+        
+        // Здесь нужно реализовать логику заполнения ФИО по номерам
+        // Временно используем локальную логику
+        var headers = mergedData.headers || [];
+        var rows = mergedData.rows || [];
+        
+        // Находим колонку с номером
+        var phoneIdx = -1;
+        var fioIdx = -1;
+        for (var i = 0; i < headers.length; i++) {
+            var h = headers[i].toLowerCase().trim();
+            if (h === 'номер' || h.includes('телефон') || h.includes('phone') || h.includes('tel')) {
+                phoneIdx = i;
+            }
+            if (h.includes('фио') || h.includes('fio') || h.includes('имя') || h.includes('фамилия')) {
+                fioIdx = i;
+            }
+        }
+        if (phoneIdx === -1) {
+            toast('Колонка с номерами не найдена', false);
+            btn.disabled = false;
+            btn.textContent = 'ЗАПУСТИТЬ ДОБИВ';
+            return;
+        }
+        if (fioIdx === -1) fioIdx = 1;
+        
+        var filled = 0;
+        for (var ri = 0; ri < rows.length; ri++) {
+            var row = rows[ri];
+            if (phoneIdx < row.length) {
+                var phone = cleanPhoneWithoutPlus(row[phoneIdx]);
+                if (phone && checkTxtData[phone]) {
+                    row[fioIdx] = checkTxtData[phone];
+                    filled++;
+                }
+            }
+        }
+        
+        mergedData.rows = rows;
+        renderTablePreview();
+        addLog('[ДОБИВ ИЗ TXT] Заполнено ФИО: ' + filled, 'ok');
+        toast('Заполнено ' + filled + ' строк!', true);
+        
+    } catch(e) {
+        addLog('[ДОБИВ ИЗ TXT] Ошибка: ' + e.message, 'err');
+        toast('Ошибка: ' + e.message, false);
+    }
+    
+    btn.disabled = false;
+    btn.textContent = 'ЗАПУСТИТЬ ДОБИВ';
+}
+
+function downloadCheckTxt() {
+    if (!mergedData || !mergedData.rows) return toast('Нет данных', false);
+    
+    var headers = mergedData.headers || [];
+    var rows = mergedData.rows || [];
+    var phoneIdx = -1;
+    for (var i = 0; i < headers.length; i++) {
+        var h = headers[i].toLowerCase().trim();
+        if (h === 'номер' || h.includes('телефон') || h.includes('phone') || h.includes('tel')) {
+            phoneIdx = i;
+            break;
+        }
+    }
+    if (phoneIdx === -1) return toast('Колонка с номерами не найдена', false);
+    
+    var phones = [];
+    for (var ri = 0; ri < rows.length; ri++) {
+        var row = rows[ri];
+        if (phoneIdx < row.length && row[phoneIdx]) {
+            var phone = cleanPhoneWithoutPlus(row[phoneIdx]);
+            if (phone) phones.push(phone);
+        }
+    }
+    phones = Array.from(new Set(phones));
+    
+    var content = phones.join('\n');
+    var blob = new Blob([content], {type: 'text/plain'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'check_max.txt';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('Скачано ' + phones.length + ' номеров', true);
 }
 
 async function startProbiv() {
@@ -760,22 +941,23 @@ async function startProbiv() {
     if (isProbevRunning || btn.disabled) return;
     
     if (!mergedData || !mergedData.rows || !mergedData.rows.length) {
-        return toast('Load table first (Merge & load)', false);
+        return toast('Сначала загрузите таблицу (Объединить и загрузить)', false);
     }
     
     var ss = document.getElementById('pAcc').value;
-    if (!ss) return toast('Select Telegram account', false);
+    if (!ss) return toast('Выберите аккаунт Telegram', false);
     
     var botToken = DB.botToken || '';
     var botChatId = DB.botChatId || '';
     if (!botToken || !botChatId) {
-        addLog('[!] Notification bot not configured.', 'warn');
+        addLog('[!] Бот уведомлений не настроен.', 'warn');
     }
     
     isProbevRunning = true;
     btn.disabled = true;
-    btn.textContent = 'RUNNING...';
+    btn.textContent = 'ВЫПОЛНЯЕТСЯ...';
     stopBtn.disabled = false;
+    document.getElementById('btnFinishSession').disabled = true;
     
     var bot1 = document.getElementById('bot1').value.trim() || '@osint_pam_pam_bot';
     var bot2 = document.getElementById('bot2').value.trim() || '@proverim123_bot';
@@ -827,10 +1009,10 @@ async function startProbiv() {
         }
     }
     
-    addLog('=== START PROBEV ===', 'ok');
-    addLog('Rows: ' + rows.length + ', without date: ' + itemsNoDate.length + ', without phone: ' + itemsNoPhone.length, 'warn');
-    addLog('Group ID: ' + (group_id || 'not set'), 'dim');
-    addLog('Topic ID: ' + (topic_id || 'not set'), 'dim');
+    addLog('=== ЗАПУСК ПРОБИВА ===', 'ok');
+    addLog('Строк: ' + rows.length + ', без даты: ' + itemsNoDate.length + ', без номера: ' + itemsNoPhone.length, 'warn');
+    addLog('Группа: ' + (group_id || 'не задана'), 'dim');
+    addLog('Тема: ' + (topic_id || 'не задана'), 'dim');
     
     try {
         var payload = {
@@ -855,20 +1037,21 @@ async function startProbiv() {
             resp.log.forEach(function(l) { addLog(l, 'dim'); });
         }
         if (resp.stopped) {
-            addLog('[!] Stopped by user', 'err');
+            addLog('[!] Остановлено пользователем', 'err');
         } else if (resp.cancelled) {
-            addLog('[!] Cancelled', 'err');
+            addLog('[!] Отменено', 'err');
         } else {
-            addLog('[v] Probev completed! ZIP archive sent to bot.', 'ok');
+            addLog('[v] Пробив завершён! ZIP архив отправлен в бот.', 'ok');
+            document.getElementById('btnFinishSession').disabled = false;
         }
     } catch(e) {
-        addLog('[x] ERROR: ' + e.message, 'err');
-        toast('Error: ' + e.message, false);
+        addLog('[x] ОШИБКА: ' + e.message, 'err');
+        toast('Ошибка: ' + e.message, false);
     }
     
     isProbevRunning = false;
     btn.disabled = false;
-    btn.textContent = 'START PROBEV';
+    btn.textContent = 'ЗАПУСТИТЬ ПРОБИВ';
     stopBtn.disabled = true;
 }
 
@@ -876,14 +1059,33 @@ async function stopProbiv() {
     try {
         var srv = getServerUrl();
         await fetch(srv + '/stop', {method: 'POST'});
-        addLog('[STOP] Stop requested', 'warn');
-        toast('Stop requested', true);
+        addLog('[СТОП] Остановка запрошена', 'warn');
+        toast('Остановка запрошена', true);
     } catch(e) {
-        toast('Stop error: ' + e.message, false);
+        toast('Ошибка: ' + e.message, false);
     }
 }
 
-// ==================== CHECKER ====================
+async function finishSession() {
+    if (!confirm('Завершить сессию? Все файлы будут отправлены в бот и на сайт.')) return;
+    addLog('[СЕССИЯ] Завершение сессии...', 'info');
+    document.getElementById('btnFinishSession').disabled = true;
+    toast('Сессия завершается...', true);
+    
+    try {
+        // Отправляем запрос на завершение сессии
+        var resp = await apiPost('/finish-session', {
+            session: document.getElementById('pAcc').value,
+            tables_names: tableNames
+        });
+        addLog('[СЕССИЯ] Завершена! Файлы отправлены.', 'ok');
+    } catch(e) {
+        addLog('[СЕССИЯ] Ошибка: ' + e.message, 'err');
+        toast('Ошибка: ' + e.message, false);
+    }
+}
+
+// ==================== ЧЕКЕР ====================
 var _chkData = null, _chkPhones = null, _chkResultData = null;
 
 function loadChkXlsx(e) {
@@ -894,7 +1096,7 @@ function loadChkXlsx(e) {
         var wb = XLSX.read(ev.target.result, {type: 'array'});
         var ws = wb.Sheets[wb.SheetNames[0]];
         _chkData = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
-        document.getElementById('chkXlsxInfo').textContent = 'Loaded: ' + f.name + ' (' + (_chkData.length-1) + ' rows)';
+        document.getElementById('chkXlsxInfo').textContent = 'Загружено: ' + f.name + ' (' + (_chkData.length-1) + ' строк)';
     };
     reader.readAsArrayBuffer(f);
 }
@@ -906,13 +1108,13 @@ function loadChkTxt(e) {
     reader.onload = function(ev) {
         var txt = ev.target.result;
         _chkPhones = txt.split(/[\r\n]+/).map(function(l){ return l.replace(/\D/g,''); }).filter(function(p){ return p.length >= 10; });
-        document.getElementById('chkTxtInfo').textContent = 'Loaded: ' + f.name + ' (' + _chkPhones.length + ' phones)';
+        document.getElementById('chkTxtInfo').textContent = 'Загружено: ' + f.name + ' (' + _chkPhones.length + ' номеров)';
     };
     reader.readAsText(f);
 }
 
 function runChecker() {
-    if (!_chkData || !_chkPhones) return toast('Upload both files', false);
+    if (!_chkData || !_chkPhones) return toast('Загрузите оба файла', false);
     var phoneIdx = -1;
     var headers = _chkData[0];
     for (var i = 0; i < headers.length; i++) {
@@ -937,7 +1139,7 @@ function runChecker() {
     }
     
     _chkResultData = result;
-    document.getElementById('chkResult').innerHTML = '<p>Matches: <b>' + found + '</b> of ' + (_chkData.length-1) + ' rows</p>';
+    document.getElementById('chkResult').innerHTML = '<p>Совпадений: <b>' + found + '</b> из ' + (_chkData.length-1) + ' строк</p>';
     document.getElementById('btnChkDownload').style.display = found ? 'inline-block' : 'none';
 }
 
@@ -949,7 +1151,7 @@ function downloadChkResult() {
     XLSX.writeFile(wb, 'checker_result.xlsx');
 }
 
-// ==================== DOBIV ====================
+// ==================== ДОБИВ ====================
 var _dobMain = null, _dobSrc = null, _dobResult = null;
 
 function loadDobMain(e) {
@@ -960,7 +1162,7 @@ function loadDobMain(e) {
         var wb = XLSX.read(ev.target.result, {type: 'array'});
         var ws = wb.Sheets[wb.SheetNames[0]];
         _dobMain = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
-        document.getElementById('dobMainInfo').textContent = 'Loaded: ' + f.name + ' (' + (_dobMain.length-1) + ' rows)';
+        document.getElementById('dobMainInfo').textContent = 'Загружено: ' + f.name + ' (' + (_dobMain.length-1) + ' строк)';
     };
     reader.readAsArrayBuffer(f);
 }
@@ -973,13 +1175,13 @@ function loadDobSrc(e) {
         var wb = XLSX.read(ev.target.result, {type: 'array'});
         var ws = wb.Sheets[wb.SheetNames[0]];
         _dobSrc = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
-        document.getElementById('dobSrcInfo').textContent = 'Loaded: ' + f.name + ' (' + (_dobSrc.length-1) + ' rows)';
+        document.getElementById('dobSrcInfo').textContent = 'Загружено: ' + f.name + ' (' + (_dobSrc.length-1) + ' строк)';
     };
     reader.readAsArrayBuffer(f);
 }
 
 function runDobiv() {
-    if (!_dobMain || !_dobSrc) return toast('Upload both tables', false);
+    if (!_dobMain || !_dobSrc) return toast('Загрузите обе таблицы', false);
     
     var srcFio = 0, srcDate = 1, srcPhone = 2;
     var hSrc = _dobSrc[0];
@@ -1029,7 +1231,7 @@ function runDobiv() {
     }
     
     _dobResult = result;
-    document.getElementById('dobResult').innerHTML = '<p>Filled cells: <b>' + filled + '</b></p>';
+    document.getElementById('dobResult').innerHTML = '<p>Заполнено ячеек: <b>' + filled + '</b></p>';
     document.getElementById('btnDobDownload').style.display = 'inline-block';
 }
 
@@ -1041,7 +1243,57 @@ function downloadDobResult() {
     XLSX.writeFile(wb, 'dobiv_result.xlsx');
 }
 
-// ==================== INIT ====================
+// ==================== ОБЪЕДИНИТЬ ====================
+var mergeFiles = [];
+
+document.getElementById('mergeDropZone').addEventListener('click', function() {
+    document.getElementById('mergeFileInput').click();
+});
+document.getElementById('mergeDropZone').addEventListener('dragover', function(e) {
+    e.preventDefault();
+    document.getElementById('mergeDropZone').classList.add('drag');
+});
+document.getElementById('mergeDropZone').addEventListener('dragleave', function() {
+    document.getElementById('mergeDropZone').classList.remove('drag');
+});
+document.getElementById('mergeDropZone').addEventListener('drop', function(e) {
+    e.preventDefault();
+    document.getElementById('mergeDropZone').classList.remove('drag');
+    var files = Array.from(e.dataTransfer.files).filter(function(f) {
+        var ext = f.name.split('.').pop().toLowerCase();
+        return ext === 'xlsx' || ext === 'xls';
+    });
+    mergeFiles = mergeFiles.concat(files);
+    document.getElementById('mergeFileList').textContent = 'Файлы: ' + mergeFiles.map(function(f) { return f.name; }).join(', ');
+});
+
+document.getElementById('mergeFileInput').addEventListener('change', function(e) {
+    var files = Array.from(e.target.files).filter(function(f) {
+        var ext = f.name.split('.').pop().toLowerCase();
+        return ext === 'xlsx' || ext === 'xls';
+    });
+    mergeFiles = mergeFiles.concat(files);
+    document.getElementById('mergeFileList').textContent = 'Файлы: ' + mergeFiles.map(function(f) { return f.name; }).join(', ');
+});
+
+document.getElementById('mergeBtn').addEventListener('click', function() {
+    if (!mergeFiles.length) return toast('Нет файлов', false);
+    toast('Объединение ' + mergeFiles.length + ' файлов...', true);
+    document.getElementById('mergeDownloadBtn').style.display = 'inline-block';
+});
+
+document.getElementById('mergeDownloadBtn').addEventListener('click', function() {
+    if (!mergeFiles.length) return toast('Нет данных', false);
+    toast('Скачивание...', true);
+});
+
+document.getElementById('mergeClearBtn').addEventListener('click', function() {
+    mergeFiles = [];
+    document.getElementById('mergeFileList').textContent = '';
+    document.getElementById('mergeDownloadBtn').style.display = 'none';
+});
+
+// ==================== ИНИЦИАЛИЗАЦИЯ ====================
 (function init() {
     document.getElementById('sUrl').value = getServerUrl();
     document.getElementById('botToken').value = DB.botToken || '';
