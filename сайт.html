@@ -579,9 +579,15 @@ function addLog(msg, cls) {
 }
 
 async function startProbiv() {
+    // Блокируем кнопку СРАЗУ — защита от двойного клика
+    var btn = document.getElementById('btnProbiv');
+    if (btn.disabled) return;  // уже запущен
+    btn.disabled = true;
+    btn.textContent = '⏳ ВЫПОЛНЯЕТСЯ...';
+
     var ss = document.getElementById('pAcc').value;
-    if (!ss) return toast('Выберите аккаунт Telegram', false);
-    if (!_probivRows.length) return toast('Загрузите XLSX-файл', false);
+    if (!ss) { btn.disabled = false; btn.textContent = '🚀 ЗАПУСТИТЬ ПОЛНЫЙ ПРОБИВ'; return toast('Выберите аккаунт Telegram', false); }
+    if (!_probivRows.length) { btn.disabled = false; btn.textContent = '🚀 ЗАПУСТИТЬ ПОЛНЫЙ ПРОБИВ'; return toast('Загрузите XLSX-файл', false); }
 
     var bot1 = document.getElementById('bot1').value.trim() || '@osint_pam_pam_bot';
     var bot2 = document.getElementById('bot2').value.trim() || '@proverim123_bot';
@@ -634,10 +640,6 @@ async function startProbiv() {
     addLog('Строк без даты (этап 1): ' + itemsNoDate.length, 'yellow');
     addLog('Строк без номера (этапы 5-6): ' + itemsNoPhone.length, 'yellow');
     addLog('Бот1: ' + bot1 + ', Бот2: ' + bot2, 'dim');
-
-    var btn = document.getElementById('btnProbiv');
-    btn.disabled = true;
-    btn.textContent = '⏳ ВЫПОЛНЯЕТСЯ...';
 
     try {
         // Формируем original_rows из ОТФИЛЬТРОВАННЫХ строк (после фильтра годов)

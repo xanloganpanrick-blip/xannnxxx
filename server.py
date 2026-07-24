@@ -20,6 +20,7 @@ user_clients = {}
 TEMP_DIR = "temp_files"
 os.makedirs(TEMP_DIR, exist_ok=True)
 pending_confirms = {}
+active_probevs = set()  # защита от двойного запуска
 
 # ====================== MIDDLEWARE ======================
 @web.middleware
@@ -957,21 +958,29 @@ async def handle_full_probev(request):
         if not ss:
             return web.json_response({"ok": False, "error": "Нет сессии"}, status=400)
 
-        print(f"\n{'='*60}")
-        print(f"[PROBEV] ЗАПУСК ПОЛНОГО ЦИКЛА")
-        print(f"[PROBEV] Бот1: {bot1}, Бот2: {bot2}")
-        print(f"[PROBEV] Строк без даты: {len(items_no_date)}")
-        print(f"[PROBEV] Строк без номера: {len(items_no_phone)}")
-        print(f"[PROBEV] СНИЛС: {len(items_snils)}")
-        print(f"[PROBEV] Всего строк: {len(original_rows)}")
-        print(f"{'='*60}\n")
+        # Защита от двойного запуска
+        if ss in active_probevs:
+            return web.json_response({"ok": False, "error": "Пробив уже выполняется для этой сессии"}, status=409)
+        active_probevs.add(ss)
 
-        result = await run_full_cycle(
-            ss, bot1, bot2, bot_token, chat_id,
-            items_no_date, items_no_phone, items_snils,
-            year_range, original_rows
-        )
-        return web.json_response(result)
+        try:
+            print(f"\n{'='*60}")
+            print(f"[PROBEV] ЗАПУСК ПОЛНОГО ЦИКЛА")
+            print(f"[PROBEV] Бот1: {bot1}, Бот2: {bot2}")
+            print(f"[PROBEV] Строк без даты: {len(items_no_date)}")
+            print(f"[PROBEV] Строк без номера: {len(items_no_phone)}")
+            print(f"[PROBEV] СНИЛС: {len(items_snils)}")
+            print(f"[PROBEV] Всего строк: {len(original_rows)}")
+            print(f"{'='*60}\n")
+
+            result = await run_full_cycle(
+                ss, bot1, bot2, bot_token, chat_id,
+                items_no_date, items_no_phone, items_snils,
+                year_range, original_rows
+            )
+            return web.json_response(result)
+        finally:
+            active_probevs.discard(ss)
     except Exception as e:
         traceback.print_exc()
         return web.json_response({"ok": False, "error": str(e)}, status=400)
