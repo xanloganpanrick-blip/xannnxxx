@@ -301,15 +301,10 @@ def geo_filter(headers, rows):
                 break
         if found == -1:
             for i, h in enumerate(headers):
-<<<<<<< HEAD
                 hl = h.lower()
                 if col.lower() in hl:
-                    # Для "Номер" исключаем "паспорт" и "инн"
                     if col.lower() == 'номер' and ('паспорт' in hl or 'инн' in hl or 'passport' in hl or 'inn' in hl):
                         continue
-=======
-                if col.lower() in h.lower():
->>>>>>> 8cce505ad78a648b106bfb942fe3d10ae439b11d
                     found = i
                     break
         idx_map[col] = found

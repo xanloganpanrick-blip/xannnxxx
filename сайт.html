@@ -692,19 +692,12 @@ function renderTablePreview() {
     var emptyDate = 0, emptyPhone = 0, emptySnils = 0;
     var fioIdx = -1, dateIdx = -1, phoneIdx = -1, snilsIdx = -1, addrIdx = -1;
     for (var i = 0; i < h.length; i++) {
-<<<<<<< HEAD
         var hh = h[i].toLowerCase().trim();
         if (hh.includes('fio') || hh.includes('фио') || hh.includes('имя') || hh.includes('фамилия')) fioIdx = i;
         if (hh.includes('дата') || hh.includes('date') || hh.includes('рожд')) dateIdx = i;
         if (hh === 'номер') { phoneIdx = i; }
         else if (!hh.includes('паспорт') && !hh.includes('инн') && !hh.includes('passport') && !hh.includes('inn') &&
                  (hh.includes('телефон') || hh.includes('phone') || hh.includes('tel') || hh.includes('номер'))) { phoneIdx = i; }
-=======
-        var hh = h[i].toLowerCase();
-        if (hh.includes('fio') || hh.includes('фио') || hh.includes('имя') || hh.includes('фамилия')) fioIdx = i;
-        if (hh.includes('дата') || hh.includes('date') || hh.includes('рожд')) dateIdx = i;
-        if (hh.includes('номер') || hh.includes('телефон') || hh.includes('phone') || hh.includes('tel')) phoneIdx = i;
->>>>>>> 8cce505ad78a648b106bfb942fe3d10ae439b11d
         if (hh.includes('снилс') || hh.includes('snils')) snilsIdx = i;
         if (hh.includes('адрес') || hh.includes('адресс') || hh.includes('address')) addrIdx = i;
     }
@@ -795,20 +788,12 @@ async function startProbiv() {
     
     var fioIdx = -1, dateIdx = -1, phoneIdx = -1, snilsIdx = -1, addrIdx = -1, tableNumIdx = -1;
     for (var i = 0; i < headers.length; i++) {
-<<<<<<< HEAD
         var h = headers[i].toLowerCase().trim();
         if (h.includes('fio') || h.includes('фио') || h.includes('имя') || h.includes('фамилия')) fioIdx = i;
         if (h.includes('дата') || h.includes('date') || h.includes('рожд')) dateIdx = i;
-        // Приоритет: точное совпадение "номер" (исключая "паспорт номер", "инн" и т.д.)
         if (h === 'номер') { phoneIdx = i; }
         else if (!h.includes('паспорт') && !h.includes('инн') && !h.includes('passport') && !h.includes('inn') &&
                  (h.includes('телефон') || h.includes('phone') || h.includes('tel') || h.includes('номер'))) { phoneIdx = i; }
-=======
-        var h = headers[i].toLowerCase();
-        if (h.includes('fio') || h.includes('фио') || h.includes('имя') || h.includes('фамилия')) fioIdx = i;
-        if (h.includes('дата') || h.includes('date') || h.includes('рожд')) dateIdx = i;
-        if (h.includes('номер') || h.includes('телефон') || h.includes('phone') || h.includes('tel')) phoneIdx = i;
->>>>>>> 8cce505ad78a648b106bfb942fe3d10ae439b11d
         if (h.includes('снилс') || h.includes('snils')) snilsIdx = i;
         if (h.includes('адрес') || h.includes('адресс') || h.includes('address')) addrIdx = i;
         if (h.includes('n tablicy') || h === 'n' || h.includes('таблиц')) tableNumIdx = i;
