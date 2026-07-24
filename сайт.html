@@ -159,7 +159,7 @@
         <!-- ========== ПРОБИВЫ ========== -->
         <div class="page" id="page-probiv">
             <div class="title">Пробивы</div>
-            <div class="subtitle">Полный цикл: ФИО+номер -> СНИЛС -> ФИО+дата -> Добив -> Квартиры (8 этапов)</div>
+            <div class="subtitle">Полный цикл: ФИО+номер -> СНИЛС -> Добив -> Квартиры (8 этапов + DeepSeek)</div>
 
             <div class="card">
                 <h3>1. Загрузите таблицы (ZIP или несколько XLSX)</h3>
@@ -209,27 +209,40 @@
                 <div class="flex mt-8">
                     <button class="btn-white" id="btnProbiv" onclick="startProbiv()">ЗАПУСТИТЬ ПРОБИВ</button>
                     <button class="btn-red" id="btnStopProbiv" onclick="stopProbiv()" disabled>ОСТАНОВИТЬ</button>
-                    <button class="btn-yellow" id="btnFinishSession" onclick="finishSession()" disabled>ЗАВЕРШИТЬ СЕССИЮ</button>
                 </div>
                 <div class="text-xs mt-8" style="color:#666;">
                     Файлы будут переименованы по адресу: ИНН_Адрес.xlsx или УК_Адрес.xlsx
                 </div>
             </div>
 
-            <div class="card">
-                <h3>4. Добив через TXT (как в minecraft)</h3>
+            <!-- ПЛАШКА: Завершение сессии и TXT для чекера -->
+            <div class="card" id="sessionCard" style="display:none;">
+                <h3>Завершение сессии</h3>
+                <p class="text-sm mb-8">После завершения пробива скачайте файлы с именами ИНН/УК_Адрес</p>
                 <div class="flex">
-                    <button class="btn-dark btn-sm" onclick="document.getElementById('checkTxtInput').click()">Загрузить TXT с номерами</button>
-                    <button class="btn-green btn-sm" id="btnRunDobivFromTxt" onclick="runDobivFromTxt()" disabled>ЗАПУСТИТЬ ДОБИВ</button>
-                    <button class="btn-yellow btn-sm" id="btnDownloadCheckTxt" onclick="downloadCheckTxt()" disabled>Скачать TXT для чека</button>
+                    <button class="btn-white" id="btnFinishSession" onclick="finishSessionAndDownload()">Завершить и скачать файлы</button>
+                    <button class="btn-dark btn-sm" id="btnDownloadCheckTxt2" onclick="downloadCheckTxt()" disabled>Скачать TXT для чека</button>
                 </div>
-                <input type="file" id="checkTxtInput" accept=".txt" style="display:none" onchange="loadCheckTxt(event)">
-                <div id="checkTxtInfo" class="text-sm mt-8"></div>
-                <div id="checkTxtData" class="hidden"></div>
+                <div class="text-xs mt-8" style="color:#666;">
+                    TXT содержит номера для проверки максов. После скачивания отправьте боту для добива ФИО.
+                </div>
+            </div>
+
+            <!-- ПЛАШКА: Загрузка TXT с Номер Имя (как в minecraft) -->
+            <div class="card" id="txtUploadCard" style="display:none;">
+                <h3>Добив по TXT (Номер Имя)</h3>
+                <p class="text-sm mb-8">Загрузите TXT файл где каждая строка: Номер Имя (без +7)</p>
+                <div class="flex">
+                    <button class="btn-dark btn-sm" onclick="document.getElementById('dobiTxtInput').click()">Загрузить TXT с номерами</button>
+                    <button class="btn-yellow btn-sm" id="btnRunDobivFromTxt" onclick="runDobivFromTxt()" disabled>ЗАПУСТИТЬ ДОБИВ</button>
+                </div>
+                <input type="file" id="dobiTxtInput" accept=".txt" style="display:none" onchange="loadDobivTxt(event)">
+                <div id="dobiTxtInfo" class="text-sm mt-8"></div>
+                <div id="dobiTxtData" class="hidden"></div>
             </div>
 
             <div class="card">
-                <h3>5. Лог</h3>
+                <h3>Лог</h3>
                 <div class="log-box" id="pLog"><span class="dim">Ожидание...</span></div>
                 <div class="flex mt-8">
                     <button class="btn-dark btn-sm" onclick="document.getElementById('pLog').innerHTML='<span class=\"dim\">Очищено.</span>'">Очистить лог</button>
@@ -363,7 +376,11 @@ function cleanPhoneWithoutPlus(t) {
 
 function normFio(t) {
     if (!t) return '';
-    return (''+t).trim().toUpperCase().replace(/Ё/g,'Е').replace(/\s+/g,' ');
+    // Каждое слово с прописной буквы
+    var words = (''+t).trim().split(/\s+/);
+    return words.map(function(w) {
+        return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    }).join(' ').replace(/Ё/g,'Е');
 }
 
 function parseDate(v) {
@@ -572,6 +589,7 @@ function clearUploads() {
     uploadedFiles = [];
     mergedData = null;
     tableNames = [];
+    checkTxtData = null;
     document.getElementById('uploadFileList').innerHTML = '';
     document.getElementById('uploadInfo').textContent = '';
     document.getElementById('tablePreview').innerHTML = '';
@@ -579,6 +597,11 @@ function clearUploads() {
     document.getElementById('tableNamesInfo').textContent = '';
     document.getElementById('fileInput').value = '';
     document.getElementById('btnFinishSession').disabled = true;
+    document.getElementById('btnDownloadCheckTxt2').disabled = true;
+    document.getElementById('sessionCard').style.display = 'none';
+    document.getElementById('txtUploadCard').style.display = 'none';
+    document.getElementById('dobiTxtInfo').textContent = '';
+    document.getElementById('btnRunDobivFromTxt').disabled = true;
 }
 
 function updateFileList() {
@@ -658,6 +681,9 @@ async function mergeUploaded() {
                 renderTablePreview();
                 refreshAccSelects();
                 document.getElementById('btnFinishSession').disabled = false;
+                document.getElementById('btnDownloadCheckTxt2').disabled = false;
+                document.getElementById('sessionCard').style.display = 'block';
+                document.getElementById('txtUploadCard').style.display = 'block';
                 toast('Объединено успешно!', true);
             } else {
                 toast('Ошибка: ' + (data.error || 'Неизвестно'), false);
@@ -717,6 +743,9 @@ async function mergeUploaded() {
             renderTablePreview();
             refreshAccSelects();
             document.getElementById('btnFinishSession').disabled = false;
+            document.getElementById('btnDownloadCheckTxt2').disabled = false;
+            document.getElementById('sessionCard').style.display = 'block';
+            document.getElementById('txtUploadCard').style.display = 'block';
             toast('Объединено ' + allTables.length + ' таблиц!', true);
         } else {
             toast('Нет валидных XLSX или ZIP файлов', false);
@@ -825,42 +854,39 @@ function loadCheckTxt(e) {
             }
         }
         checkTxtData = phoneToFio;
-        document.getElementById('checkTxtInfo').textContent = 'Загружено: ' + Object.keys(phoneToFio).length + ' номеров';
+        document.getElementById('dobiTxtInfo').textContent = 'Загружено: ' + Object.keys(phoneToFio).length + ' номеров';
         document.getElementById('btnRunDobivFromTxt').disabled = false;
-        document.getElementById('checkTxtData').value = JSON.stringify(phoneToFio);
+        document.getElementById('dobiTxtData').value = JSON.stringify(phoneToFio);
         toast('TXT загружен!', true);
     };
     reader.readAsText(f);
+}
+
+function loadDobivTxt(e) {
+    loadCheckTxt(e);
 }
 
 async function runDobivFromTxt() {
     if (!checkTxtData || !Object.keys(checkTxtData).length) return toast('Сначала загрузите TXT', false);
     if (!mergedData) return toast('Сначала загрузите таблицу', false);
     
-    var ss = document.getElementById('pAcc').value;
-    if (!ss) return toast('Выберите аккаунт Telegram', false);
-    
     var btn = document.getElementById('btnRunDobivFromTxt');
     btn.disabled = true;
     btn.textContent = 'ЗАПУСК...';
     
     try {
-        // Отправляем на сервер для заполнения ФИО по номерам
-        addLog('[ДОБИВ ИЗ TXT] Запуск...', 'info');
-        addLog('[ДОБИВ ИЗ TXT] Номеров: ' + Object.keys(checkTxtData).length, 'info');
+        addLog('[ДОБИВ TXT] Запуск добива ФИО по номерам...', 'info');
+        addLog('[ДОБИВ TXT] Номеров в TXT: ' + Object.keys(checkTxtData).length, 'info');
         
-        // Здесь нужно реализовать логику заполнения ФИО по номерам
-        // Временно используем локальную логику
         var headers = mergedData.headers || [];
         var rows = mergedData.rows || [];
         
-        // Находим колонку с номером
         var phoneIdx = -1;
         var fioIdx = -1;
         for (var i = 0; i < headers.length; i++) {
             var h = headers[i].toLowerCase().trim();
             if (h === 'номер' || h.includes('телефон') || h.includes('phone') || h.includes('tel')) {
-                phoneIdx = i;
+                if (!h.includes('паспорт') && !h.includes('инн')) phoneIdx = i;
             }
             if (h.includes('фио') || h.includes('fio') || h.includes('имя') || h.includes('фамилия')) {
                 fioIdx = i;
@@ -880,19 +906,31 @@ async function runDobivFromTxt() {
             if (phoneIdx < row.length) {
                 var phone = cleanPhoneWithoutPlus(row[phoneIdx]);
                 if (phone && checkTxtData[phone]) {
-                    row[fioIdx] = checkTxtData[phone];
-                    filled++;
+                    var newFio = checkTxtData[phone];
+                    // Каждое слово с прописной
+                    if (newFio) {
+                        newFio = newFio.split(' ').map(function(w) {
+                            return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+                        }).join(' ');
+                        row[fioIdx] = newFio;
+                        filled++;
+                    }
                 }
             }
         }
         
         mergedData.rows = rows;
         renderTablePreview();
-        addLog('[ДОБИВ ИЗ TXT] Заполнено ФИО: ' + filled, 'ok');
+        addLog('[ДОБИВ TXT] Заполнено ФИО: ' + filled, 'ok');
+        
+        // Показываем кнопку завершения сессии
+        document.getElementById('btnFinishSession').disabled = false;
+        document.getElementById('sessionCard').style.display = 'block';
+        
         toast('Заполнено ' + filled + ' строк!', true);
         
     } catch(e) {
-        addLog('[ДОБИВ ИЗ TXT] Ошибка: ' + e.message, 'err');
+        addLog('[ДОБИВ TXT] Ошибка: ' + e.message, 'err');
         toast('Ошибка: ' + e.message, false);
     }
     
@@ -1043,6 +1081,9 @@ async function startProbiv() {
         } else {
             addLog('[v] Пробив завершён! ZIP архив отправлен в бот.', 'ok');
             document.getElementById('btnFinishSession').disabled = false;
+            document.getElementById('btnDownloadCheckTxt2').disabled = false;
+            document.getElementById('sessionCard').style.display = 'block';
+            document.getElementById('txtUploadCard').style.display = 'block';
         }
     } catch(e) {
         addLog('[x] ОШИБКА: ' + e.message, 'err');
@@ -1067,22 +1108,85 @@ async function stopProbiv() {
 }
 
 async function finishSession() {
-    if (!confirm('Завершить сессию? Все файлы будут отправлены в бот и на сайт.')) return;
-    addLog('[СЕССИЯ] Завершение сессии...', 'info');
+    addLog('[СЕССИЯ] Завершение...', 'info');
     document.getElementById('btnFinishSession').disabled = true;
-    toast('Сессия завершается...', true);
     
     try {
-        // Отправляем запрос на завершение сессии
         var resp = await apiPost('/finish-session', {
             session: document.getElementById('pAcc').value,
-            tables_names: tableNames
+            tables_names: tableNames,
+            bot_token: DB.botToken || '',
+            chat_id: DB.botChatId || '',
+            group_id: DB.group_id || '',
+            topic_id: DB.topic_id || ''
         });
-        addLog('[СЕССИЯ] Завершена! Файлы отправлены.', 'ok');
+        addLog('[СЕССИЯ] Завершена! ' + (resp.message || ''), 'ok');
+        toast('Сессия завершена! ' + (resp.files_count || 0) + ' файлов.', true);
+        
+        // Скачиваем текущую таблицу
+        downloadMergedAsXlsx();
     } catch(e) {
         addLog('[СЕССИЯ] Ошибка: ' + e.message, 'err');
         toast('Ошибка: ' + e.message, false);
     }
+}
+
+async function finishSessionAndDownload() {
+    if (!confirm('Завершить сессию и скачать все файлы? Файлы будут названы ИНН_Адрес или УК_Адрес.')) return;
+    addLog('[СЕССИЯ] Завершение и скачивание...', 'info');
+    document.getElementById('btnFinishSession').disabled = true;
+    
+    try {
+        var resp = await apiPost('/finish-session', {
+            session: document.getElementById('pAcc').value,
+            tables_names: tableNames,
+            bot_token: DB.botToken || '',
+            chat_id: DB.botChatId || '',
+            group_id: DB.group_id || '',
+            topic_id: DB.topic_id || ''
+        });
+        addLog('[СЕССИЯ] Завершена! Файлы готовы.', 'ok');
+        
+        // Скачиваем актуальную таблицу
+        downloadMergedAsXlsx();
+        
+        // Скачиваем TXT для чека максов
+        downloadCheckTxt();
+        
+        toast('Сессия завершена! Файлы скачаны.', true);
+    } catch(e) {
+        addLog('[СЕССИЯ] Ошибка: ' + e.message, 'err');
+        toast('Ошибка: ' + e.message, false);
+    }
+}
+
+function downloadMergedAsXlsx() {
+    if (!mergedData || !mergedData.rows || !mergedData.rows.length) return toast('Нет данных', false);
+    
+    var headers = mergedData.headers || [];
+    var rows = mergedData.rows || [];
+    
+    // Находим адрес и пытаемся подтянуть название файла
+    var addrIdx = -1;
+    for (var i = 0; i < headers.length; i++) {
+        var h = headers[i].toLowerCase().trim();
+        if (h.includes('адрес') || h.includes('адресс') || h.includes('address')) {
+            addrIdx = i;
+            break;
+        }
+    }
+    
+    var fileName = 'result.xlsx';
+    if (addrIdx >= 0 && rows.length > 0 && rows[0][addrIdx]) {
+        var addr = String(rows[0][addrIdx]).replace(/[<>:\"/\\|?*]/g, '_').substring(0, 50);
+        fileName = 'УК_' + addr + '.xlsx';
+    }
+    
+    var ws = XLSX.utils.aoa_to_sheet([headers].concat(rows));
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Result');
+    XLSX.writeFile(wb, fileName);
+    toast('Скачано: ' + fileName, true);
 }
 
 // ==================== ЧЕКЕР ====================

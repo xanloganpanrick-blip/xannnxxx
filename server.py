@@ -1,4 +1,4 @@
-# server.py - X Backend v15.0 (ПОЛНАЯ ИНТЕГРАЦИЯ: ДОБИВ КВАРТИР + МАКСЫ + ЗАВЕРШЕНИЕ)
+# server.py - X Backend v16.0 (ГЛУБОКАЯ ИНТЕГРАЦИЯ: DeepSeek Квартиры + Сессии + Добив)
 # Установка: pip install aiohttp telethon openpyxl
 # Запуск: python server.py
 # Порт: 8765
@@ -67,35 +67,39 @@ def capitalize_words(text):
 
 
 def normalize_fio_local(raw):
+    """Приводит ФИО к формату 'Каждое Слово С Прописной'"""
     if not raw:
         return ""
     cleaned = re.sub(r'[^A-Za-zА-ЯЁа-яё\-]', ' ', str(raw))
     words = [w.strip() for w in cleaned.split() if w.strip()]
     if not words:
         return ""
-    result = ' '.join(words).upper().replace('Ё', 'Е')
-    # Приводим к формату "Каждое Слово С Прописной"
-    return capitalize_words(result.lower())
+    # Каждое слово с прописной, остальные строчные
+    return ' '.join([w[0].upper() + w[1:].lower() if w else '' for w in words])
 
 
 def normalize_address_local(raw):
+    """Приводит адрес к формату 'Город, Улица, Дом, Квартира' с прописной буквы"""
     if not raw:
         return ""
     s = str(raw).strip().lower()
-    replacements = {
-        'обл': 'область', 'обл.': 'область',
-        'г': 'город', 'г.': 'город',
-        'ул': 'улица', 'ул.': 'улица',
-        'д': 'дом', 'д.': 'дом',
-        'кв': 'квартира', 'кв.': 'квартира',
-        'корп': 'корпус', 'корп.': 'корпус',
-        'стр': 'строение', 'стр.': 'строение',
-    }
-    for old, new in replacements.items():
-        s = s.replace(old, new)
+    # Удаляем лишние префиксы: область, город, улица и т.д.
+    s = re.sub(r'\b(область|обл|край|республика|ао|район|р-н)\b\.?\s*', '', s)
+    s = re.sub(r'\b(г|город|гор)\b\.?\s*', '', s)
+    s = re.sub(r'\b(ул|улица|пр-т|проспект|пер|переулок|пр|проезд|б-р|бульвар|пл|площадь|наб|набережная|ш|шоссе)\b\.?\s*', '', s)
+    s = re.sub(r'\b(д|дом|влд|владение)\b\.?\s*', '', s)
+    s = re.sub(r'\b(кв|квартира|кв-ра)\b\.?\s*', '', s)
+    s = re.sub(r'\b(корп|корпус|стр|строение)\b\.?\s*', '', s)
     s = re.sub(r'\s+', ' ', s).strip()
-    # Приводим к формату "Город, Улица, Дом, Квартира"
-    parts = [p.strip().capitalize() for p in s.split(',') if p.strip()]
+    s = re.sub(r'\s*,\s*', ', ', s)
+    # Каждое слово с прописной буквы
+    parts = []
+    for p in s.split(','):
+        p = p.strip()
+        if p:
+            words = p.split()
+            cap_words = [w[0].upper() + w[1:].lower() if w else '' for w in words]
+            parts.append(' '.join(cap_words))
     return ', '.join(parts)
 
 
@@ -120,13 +124,13 @@ async def normalize_batch_deepseek(items, prompt_type='fio', retry_count=0):
             }
             
             if prompt_type == 'fio':
-                system_prompt = "Приведи каждое ФИО к формату: Фамилия Имя Отчество (каждое слово с большой буквы). Верни только список, по одному на строку, с номерами."
+                system_prompt = "Приведи каждое ФИО к формату: Фамилия Имя Отчество (каждое слово с прописной буквы, остальные строчные). Верни только список, по одному на строку, с номерами."
                 items_text = "\n".join([f"{i+1}. {f}" for i, f in enumerate(items)])
             elif prompt_type == 'address':
-                system_prompt = "Приведи каждый адрес к формату: Город, Улица, Дом, Квартира (без 'кв.'). Пример: 'Тольятти, Голосова, 26, 33'. Каждое слово с большой буквы. Верни только список, по одному на строку, с номерами."
+                system_prompt = "Приведи каждый адрес к формату: Город, Улица, Дом, Квартира. Убери 'область', 'город', 'улица', 'дом', 'квартира'. Пример: 'Мурманск, Старостина, 69, 112'. Каждое слово с прописной буквы. Верни только список, по одному на строку, с номерами."
                 items_text = "\n".join([f"{i+1}. {a}" for i, a in enumerate(items)])
             elif prompt_type == 'find_apartment':
-                system_prompt = "Для каждого адреса без квартиры найди квартиру из списка. Верни адрес с квартирой в формате: Город, Улица, Дом, Квартира. Каждое слово с большой буквы. Верни только список, по одному на строку, с номерами."
+                system_prompt = "Для каждого адреса без квартиры найди квартиру из примеров. Сопоставляй по городу, улице и дому. Верни адрес с квартирой в формате: Город, Улица, Дом, Квартира. Каждое слово с прописной буквы. Верни только список, по одному на строку, с номерами. Если квартира не найдена, оставь адрес как есть."
                 items_text = "\n".join([f"{i+1}. {a}" for i, a in enumerate(items)])
             else:
                 return items
@@ -290,6 +294,81 @@ def extract_apartment_from_report(text, target_address):
             if apt_match:
                 return apt_match.group(1)
     return None
+
+
+async def find_apartments_via_deepseek(addresses_without_apt, addresses_with_apt):
+    """Использует DeepSeek API для сопоставления адресов и поиска квартир"""
+    if not addresses_without_apt or not addresses_with_apt:
+        return {}
+    
+    # Формируем запрос: список с квартирами как примеры, список без квартир для поиска
+    examples = "\n".join([f"  С квартирой: {a}" for a in addresses_with_apt[:20]])
+    to_find = "\n".join([f"{i+1}. {a}" for i, a in enumerate(addresses_without_apt)])
+    
+    prompt = f"""Есть адреса с квартирами (примеры):
+{examples}
+
+Для каждого адреса ниже найди квартиру, сопоставив с примерами по городу, улице и дому.
+Если точное совпадение не найдено — оставь адрес без квартиры.
+Формат ответа: номер. Город, Улица, Дом, Квартира (каждое слово с прописной).
+Адреса для поиска квартир:
+{to_find}"""
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = "https://api.deepseek.com/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": "Ты помощник для сопоставления адресов и поиска квартир. Отвечай строго в формате: номер. Адрес с квартирой. Каждое слово с прописной буквы."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.1,
+                "max_tokens": 2000
+            }
+            async with session.post(url, headers=headers, json=payload, timeout=30) as resp:
+                data = await resp.json()
+                if data.get("choices"):
+                    text = data["choices"][0]["message"]["content"].strip()
+                    result = {}
+                    for line in text.split('\n'):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        # Извлекаем порядковый номер и адрес
+                        m = re.match(r'^(\d+)[\.\)]\s*(.+)', line)
+                        if m:
+                            idx = int(m.group(1)) - 1
+                            addr_with_apt = m.group(2).strip()
+                            if idx < len(addresses_without_apt):
+                                # Извлекаем квартиру
+                                apt_match = re.search(r',\s*(\d+)\s*$', addr_with_apt)
+                                if apt_match:
+                                    apartment = apt_match.group(1)
+                                    result[addresses_without_apt[idx]] = apartment
+                    return result
+    except Exception as e:
+        print(f"[DEEPSEEK-APT] Ошибка: {e}")
+    
+    # Fallback: локальное сопоставление
+    result = {}
+    for addr_wo in addresses_without_apt:
+        # Упрощаем адрес без квартиры до "город, улица, дом"
+        addr_key = re.sub(r',?\s*\d*\s*$', '', addr_wo).strip().lower()
+        addr_key = addr_key.rstrip(',').strip()
+        
+        for addr_w in addresses_with_apt:
+            if addr_key in addr_w.lower():
+                apt_match = re.search(r',\s*(\d+)\s*$', addr_w.strip())
+                if apt_match:
+                    result[addr_wo] = apt_match.group(1)
+                    break
+    
+    return result
 
 
 # ====================== MERGE / SPLIT ======================
@@ -948,7 +1027,7 @@ def fill_phones_by_numbers(ws, phone_to_fio_map):
 
 
 def fill_apartments_from_report(ws, address_to_apartment_map):
-    """Заполняет квартиры по адресу из отчёта"""
+    """Заполняет квартиры по нормализованному адресу из словаря"""
     filled = 0
     print(f"[FILL-APARTMENTS] Начинаю заполнение квартир. Карта: {len(address_to_apartment_map)}")
     
@@ -957,16 +1036,17 @@ def fill_apartments_from_report(ws, address_to_apartment_map):
         if not addr_val or addr_val == 'None':
             continue
         
-        # Нормализуем адрес (без квартиры)
-        addr_clean = re.sub(r',?\s*кв\.?\s*\d+', '', addr_val).strip().lower()
+        # Нормализуем адрес для сравнения
+        addr_clean = normalize_address_local(addr_val)
         
-        # Ищем совпадение
+        # Проверяем ключи в мапе
         for key, apartment in address_to_apartment_map.items():
-            if key.lower() in addr_clean or addr_clean in key.lower():
-                # Добавляем квартиру в адрес
-                ws.cell(row=row, column=COL_ADDR).value = f"{addr_val}, {apartment}"
+            key_clean = normalize_address_local(key)
+            if key_clean == addr_clean or key_clean in addr_clean or addr_clean in key_clean:
+                # Добавляем квартиру после запятой
+                ws.cell(row=row, column=COL_ADDR).value = f"{addr_val.rstrip(',')}, {apartment}"
                 filled += 1
-                print(f"[FILL-APARTMENTS] Строка {row}: ДОБАВЛЕНА КВАРТИРА {apartment}")
+                print(f"[FILL-APARTMENTS] Строка {row}: +кв {apartment}")
                 break
     
     print(f"[FILL-APARTMENTS] ИТОГО заполнено квартир: {filled}")
@@ -1239,10 +1319,10 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         
         caption = "ИТОГОВЫЙ ZIP АРХИВ (все таблицы + numbers.txt)"
         if complete_session:
-            caption = "СЕССИЯ ЗАВЕРШЕНА! " + caption
+            caption = "СЕССИЯ ЗАВЕРШЕНА! Все файлы с именами ИНН/УК_Адрес."
         
         await send_zip_to_bot(bot_token, chat_id, zip_path, caption, topic_id)
-        add("[v] ZIP архив отправлен")
+        add("[v] ZIP архив отправлен в бот")
         
         return zip_path
 
@@ -1262,7 +1342,8 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         if phones:
             phones = list(set(phones))
             content = '\n'.join(phones)
-            await send_txt_to_bot(bot_token, chat_id, content, "check_max.txt", "Номера для чека максов", topic_id)
+            caption = "ЧЕК МАКСОВ — проверьте эти номера.\n\nДАЛЕЕ: отправьте TXT с форматом 'Номер Имя' для добива ФИО, или нажмите 'Завершить сессию' на сайте."
+            await send_txt_to_bot(bot_token, chat_id, content, "check_max.txt", caption, topic_id)
             add(f"[TXT] Отправлен check_max.txt с {len(phones)} номерами")
 
     # === СОЗДАЁМ ТАБЛИЦУ ===
@@ -1783,25 +1864,39 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ ЭТАП 8: ДОБИВ КВАРТИР (НОВЫЙ ЭТАП) ============
-    # Собираем строки с адресом без квартиры
+    # ============ ЭТАП 8: ДОБИВ КВАРТИР (ГЛУБОКАЯ ИНТЕГРАЦИЯ) ============
+    # Этап 8a: Собираем все адреса — и с квартирами, и без
+    all_addresses = []
+    addresses_with_apt = []  # Адреса, где уже есть квартира (примеры)
+    addresses_without_apt = []  # Адреса без квартиры
     rows_without_apartment = []
+    
     for row in range(2, ws.max_row + 1):
         addr_val = str(ws.cell(row=row, column=COL_ADDR).value or "").strip()
-        if addr_val and addr_val != 'None':
-            # Проверяем, есть ли квартира
-            if not re.search(r'кв\.?\s*\d+', addr_val, re.IGNORECASE):
-                phone_val = str(ws.cell(row=row, column=COL_PHONE).value or "").strip()
-                if phone_val and phone_val != 'None' and phone_val != '0':
-                    rows_without_apartment.append({
-                        'row': row,
-                        'address': addr_val,
-                        'phone': clean_phone(phone_val)
-                    })
+        if not addr_val or addr_val == 'None':
+            continue
+        
+        has_apt = bool(re.search(r',\s*\d+\s*$', addr_val))
+        addr_normalized = normalize_address_local(addr_val)
+        
+        if has_apt:
+            if addr_normalized not in addresses_with_apt:
+                addresses_with_apt.append(addr_normalized)
+        else:
+            phone_val = str(ws.cell(row=row, column=COL_PHONE).value or "").strip()
+            if phone_val and phone_val != 'None' and phone_val != '0':
+                if addr_normalized not in addresses_without_apt:
+                    addresses_without_apt.append(addr_normalized)
+                rows_without_apartment.append({
+                    'row': row,
+                    'address': addr_val,
+                    'address_normalized': addr_normalized,
+                    'phone': clean_phone(phone_val)
+                })
 
     if rows_without_apartment and not stop_requested:
         cid = f"s8_{int(time.time())}"
-        add(f"ЭТАП 8: ДОБИВ КВАРТИР -> бот2 ({len(rows_without_apartment)} строк)")
+        add(f"ЭТАП 8: ДОБИВ КВАРТИР ({len(rows_without_apartment)} адресов без кв, {len(addresses_with_apt)} с кв для примера)")
 
         result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 8: ДОБИВ КВАРТИР", len(rows_without_apartment), cid, add, topic_id)
         if result == "stop":
@@ -1815,52 +1910,87 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             e = await client.get_entity(bot2)
             address_to_apartment = {}
             
-            for i, item in enumerate(rows_without_apartment):
+            # Этап 8a: Пробив номеров через бот2 для получения адресов с квартирами
+            unique_phones = list(set([item['phone'] for item in rows_without_apartment]))
+            add(f"[ДОБИВ-КВАРТИР] Уникальных номеров для пробива: {len(unique_phones)}")
+            
+            probed_addresses = []  # Адреса, полученные из отчётов
+            
+            for i, phone in enumerate(unique_phones):
                 if stop_requested:
                     break
                 
                 try:
-                    phone = item['phone']
-                    address = item['address']
-                    row_num = item['row']
+                    # Добавляем 7 при отправке в бот
+                    phone_for_send = clean_phone_without_plus(phone)
+                    if not phone_for_send.startswith('7'):
+                        phone_for_send = '7' + phone_for_send
                     
-                    add_log(f"[ДОБИВ-КВАРТИР] Акк 1, строка {row_num}: телефон {phone}")
+                    add(f"[ДОБИВ-КВАРТИР] Пробив номера: {phone_for_send}")
                     
-                    # Получаем отчёт
                     report = await dobiv_by_numbers(client, e, phone, add)
                     
                     if report:
+                        # Сохраняем отчёт в файл с именем, содержащим номер
+                        report_filename = f"report_{phone_for_send}.txt"
+                        report_path = os.path.join(TEMP_DIR, report_filename)
+                        with open(report_path, 'w', encoding='utf-8') as f:
+                            f.write(report)
+                        
+                        # Отправляем отчёт в бот
+                        await send_file_to_bot(bot_token, chat_id, report_path, f"Отчёт по номеру {phone_for_send}", topic_id)
+                        
                         # Извлекаем адрес из отчёта
                         report_addr = extract_address_from_report(report)
                         if report_addr:
-                            # Ищем квартиру
-                            apartment = extract_apartment_from_report(report, address)
-                            if apartment:
-                                address_to_apartment[address] = apartment
-                                add(f"[ДОБИВ-КВАРТИР] Найдена квартира {apartment} для {address}")
-                            else:
-                                add(f"[ДОБИВ-КВАРТИР] Квартира не найдена для {address}")
-                        else:
-                            add(f"[ДОБИВ-КВАРТИР] Адрес не найден в отчёте")
+                            normalized = normalize_address_local(report_addr)
+                            # Проверяем, есть ли квартира
+                            if re.search(r',\s*\d+\s*$', normalized):
+                                if normalized not in probed_addresses:
+                                    probed_addresses.append(normalized)
+                                    add(f"[ДОБИВ-КВАРТИР] Найден адрес с кв: {normalized}")
+                            elif normalized not in probed_addresses:
+                                probed_addresses.append(normalized)
                     
-                    if (i + 1) % 3 == 0:
-                        add(f"[ДОБИВ-КВАРТИР] Обработано {i+1}/{len(rows_without_apartment)}")
+                    if (i + 1) % 5 == 0:
+                        add(f"[ДОБИВ-КВАРТИР] Пробито {i+1}/{len(unique_phones)} номеров")
                         await asyncio.sleep(2)
                         
                 except FloodWaitError as e:
                     add(f"[ДОБИВ-КВАРТИР] FloodWait: {e.seconds}с")
                     await asyncio.sleep(e.seconds)
                 except Exception as e:
-                    add(f"[ДОБИВ-КВАРТИР] Ошибка: {e}")
+                    add(f"[ДОБИВ-КВАРТИР] Ошибка пробива {phone}: {e}")
             
-            # Заполняем квартиры в таблице
-            if address_to_apartment:
-                fill_apartments_from_report(ws, address_to_apartment)
-                wb.save(result_file)
-                await send_status("этап 8 (добив квартир)")
-                add(f"[ДОБИВ-КВАРТИР] Заполнено квартир: {len(address_to_apartment)}")
+            # Этап 8b: Сопоставление адресов через DeepSeek
+            all_examples = list(set(addresses_with_apt + probed_addresses))
+            add(f"[ДОБИВ-КВАРТИР] Примеров адресов с кв: {len(all_examples)}")
+            add(f"[ДОБИВ-КВАРТИР] Адресов без кв: {len(addresses_without_apt)}")
+            
+            if addresses_without_apt and all_examples:
+                add("[ДОБИВ-КВАРТИР] Запуск DeepSeek для сопоставления адресов...")
+                apt_map = await find_apartments_via_deepseek(addresses_without_apt, all_examples)
+                
+                if apt_map:
+                    # Заполняем квартиры в таблице
+                    for item in rows_without_apartment:
+                        addr_norm = item.get('address_normalized', '')
+                        if addr_norm in apt_map:
+                            apartment = apt_map[addr_norm]
+                            row = item['row']
+                            current_addr = str(ws.cell(row=row, column=COL_ADDR).value or "").strip()
+                            # Добавляем квартиру после запятой
+                            ws.cell(row=row, column=COL_ADDR).value = f"{current_addr.rstrip(',')}, {apartment}"
+                            address_to_apartment[current_addr] = apartment
+                            add(f"[ДОБИВ-КВАРТИР] Строка {row}: +кв {apartment} -> {current_addr}, {apartment}")
+                    
+                    wb.save(result_file)
+                    await send_status("этап 8 (добив квартир)")
+                    add(f"[ДОБИВ-КВАРТИР] Заполнено квартир через DeepSeek: {len(apt_map)}")
+                else:
+                    add("[ДОБИВ-КВАРТИР] DeepSeek не нашёл совпадений")
             else:
-                add("[ДОБИВ-КВАРТИР] Квартиры не найдены")
+                add("[ДОБИВ-КВАРТИР] Недостаточно данных для сопоставления")
 
     if stop_requested:
         await send_final_zip()
@@ -2147,6 +2277,86 @@ async def handle_stop(request):
     return web.json_response({"ok": True, "message": "Остановка запрошена"})
 
 
+async def handle_finish_session(request):
+    """Завершение сессии: отправка всех актуальных файлов с именами ИНН/УК_Адрес в бот"""
+    try:
+        d = await request.json()
+        ss = d.get("session", "")
+        tables_names = d.get("tables_names", [])
+        bot_token = d.get("bot_token", "")
+        chat_id = d.get("chat_id", "")
+        group_id = d.get("group_id", None)
+        topic_id = d.get("topic_id", None)
+        
+        if not ss:
+            return web.json_response({"ok": False, "error": "Нет сессии"}, status=400)
+        
+        # Ищем самый свежий result файл
+        result_files = []
+        for f in os.listdir(TEMP_DIR):
+            if f.startswith('result_') and f.endswith('.xlsx'):
+                result_files.append(os.path.join(TEMP_DIR, f))
+        
+        if not result_files:
+            return web.json_response({"ok": True, "message": "Нет файлов для отправки"})
+        
+        # Сортируем по времени создания (самый новый первый)
+        result_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+        latest_file = result_files[0]
+        
+        # Загружаем таблицу
+        wb = load_workbook(latest_file, data_only=True)
+        ws = wb.active
+        
+        # Переименовываем файлы по ИНН/адресу
+        if bot_token and chat_id and group_id:
+            try:
+                client = await get_client(ss)
+                renamed = await rename_files_by_address(ws, client, group_id, topic_id, None, tables_names)
+                
+                # Отправляем каждый файл с новым именем
+                split_result = split_by_table_num(
+                    [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)],
+                    [[ws.cell(row=r, column=c).value for c in range(1, ws.max_column + 1)] for r in range(2, ws.max_row + 1)]
+                )
+                
+                if split_result:
+                    for table_num, table_data in split_result.items():
+                        geo_result = geo_filter(table_data['headers'], table_data['rows'])
+                        ws_data = [geo_result['headers']] + geo_result['rows']
+                        
+                        wb_temp = Workbook()
+                        ws_temp = wb_temp.active
+                        for row in ws_data:
+                            ws_temp.append(row)
+                        
+                        xlsx_path = os.path.join(TEMP_DIR, f"session_{int(time.time())}_{table_num}.xlsx")
+                        wb_temp.save(xlsx_path)
+                        
+                        idx = int(table_num) - 1
+                        name = renamed[idx] if idx < len(renamed) else f"ГЕО_{table_num}"
+                        
+                        # Отправляем в бот
+                        caption = f"Сессия завершена: {name}"
+                        await send_file_to_bot(bot_token, chat_id, xlsx_path, caption, topic_id)
+            except Exception as e:
+                print(f"[FINISH] Ошибка отправки: {e}")
+        else:
+            # Просто отправляем итоговый файл
+            if bot_token and chat_id:
+                await send_file_to_bot(bot_token, chat_id, latest_file, "Сессия завершена (Итоговая таблица)", topic_id)
+        
+        return web.json_response({
+            "ok": True,
+            "message": "Сессия завершена, файлы отправлены в бот",
+            "files_count": len(result_files)
+        })
+    except Exception as e:
+        print(f"[FINISH] Ошибка: {e}")
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 # ====================== ЗАПУСК ======================
 app = web.Application(middlewares=[log_and_cors], client_max_size=200 * 1024 * 1024)
 app.router.add_get("/", handle_root)
@@ -2157,13 +2367,14 @@ app.router.add_post("/send-code", handle_send_code)
 app.router.add_post("/verify-code", handle_verify_code)
 app.router.add_post("/full-probev", handle_full_probev)
 app.router.add_post("/stop", handle_stop)
+app.router.add_post("/finish-session", handle_finish_session)
 
 
 async def on_startup(app):
     port = app["port"]
     msg = (
         "=" * 60 + "\n"
-        f"X Backend v15.0 ЗАПУЩЕН (8 этапов + ДОБИВ КВАРТИР)\n"
+        f"X Backend v16.0 ЗАПУЩЕН (8 этапов + DeepSeek квартиры + сессии)\n"
         f"Host: 0.0.0.0  |  Port: {port}\n"
         + "=" * 60
     )
