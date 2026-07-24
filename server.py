@@ -1,9 +1,16 @@
-# server.py - X Backend v13.1 (FIXED: probev state management + бесконечное ожидание)
+# server.py - X Backend v13.4 (DeepSeek BATCH + АДРЕСА + СУПЕРГРУППЫ)
 # Установка: pip install aiohttp telethon openpyxl
 # Запуск: python server.py
 # Порт: 8765
 
-import asyncio, json, os, re, time, traceback, io, zipfile
+import asyncio
+import json
+import os
+import re
+import time
+import traceback
+import io
+import zipfile
 from datetime import datetime
 from aiohttp import web
 import aiohttp
@@ -23,10 +30,9 @@ user_clients = {}
 TEMP_DIR = "temp_files"
 os.makedirs(TEMP_DIR, exist_ok=True)
 pending_confirms = {}
-active_probevs = {}  # {session: task} - храним активные задачи
-probev_lock = asyncio.Lock()  # Блокировка для безопасного доступа
+active_probevs = {}  # {session: task}
+probev_lock = asyncio.Lock()
 stop_requested = False
-probev_context = {}  # хранит состояние текущего пробива
 
 # ====================== MIDDLEWARE ======================
 @web.middleware
@@ -48,20 +54,30 @@ async def log_and_cors(request, handler):
     print(f"[REQ] {ts}  -> {response.status}", flush=True)
     return response
 
-# ====================== UTILITIES ======================
-def normalize_fio(raw):
+# ====================== УТИЛИТЫ ======================
+def normalize_fio_local(raw):
     if not raw:
         return ""
-    words = [re.sub(r'[^A-Za-zА-ЯЁа-яё\-]', '', w) for w in str(raw).strip().split() if w]
-    words = [w for w in words if w]
+    cleaned = re.sub(r'[^A-Za-zА-ЯЁа-яё\-]', ' ', str(raw))
+    words = [w.strip() for w in cleaned.split() if w.strip()]
     if not words:
         return ""
-    return ' '.join([w[0].upper() + w[1:].lower() for w in words]).upper().replace('Ё', 'Е')
+    return ' '.join(words).upper().replace('Ё', 'Е')
 
 
-async def normalize_fio_deepseek(fio_text):
-    if not fio_text or len(str(fio_text).strip()) < 2:
-        return normalize_fio(fio_text)
+async def normalize_batch_deepseek(items, prompt_type='fio'):
+    """
+    Пакетная нормализация через DeepSeek
+    prompt_type: 'fio' или 'address'
+    """
+    if not items:
+        return []
+    
+    if len(items) <= 2:
+        if prompt_type == 'fio':
+            return [normalize_fio_local(f) for f in items]
+        else:
+            return items  # адреса не нормализуем локально
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -70,24 +86,46 @@ async def normalize_fio_deepseek(fio_text):
                 "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
                 "Content-Type": "application/json"
             }
+            
+            if prompt_type == 'fio':
+                system_prompt = "Normalize each FIO to format: LASTNAME FIRSTNAME PATRONYMIC. Return only normalized list, one per line, numbered. Use UPPERCASE."
+                items_text = "\n".join([f"{i+1}. {f}" for i, f in enumerate(items)])
+            else:
+                system_prompt = "Normalize each address to format: CITY, STREET, HOUSE, KV. Example: 'Тольятти, Голосова,26, кв.33'. Return only normalized list, one per line, numbered."
+                items_text = "\n".join([f"{i+1}. {a}" for i, a in enumerate(items)])
+            
             payload = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": "Normalize FIO to format: LASTNAME FIRSTNAME PATRONYMIC. Only FIO, uppercase."},
-                    {"role": "user", "content": f"Normalize: {fio_text}"}
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Normalize these:\n{items_text}"}
                 ],
                 "temperature": 0.1,
-                "max_tokens": 50
+                "max_tokens": 800
             }
-            async with session.post(url, headers=headers, json=payload, timeout=10) as resp:
+            async with session.post(url, headers=headers, json=payload, timeout=15) as resp:
                 data = await resp.json()
                 if data.get("choices"):
-                    result = data["choices"][0]["message"]["content"].strip().upper()
-                    print(f"[DEEPSEEK] Normalized: {fio_text} -> {result}")
+                    text = data["choices"][0]["message"]["content"].strip()
+                    result = []
+                    for line in text.split('\n'):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if re.match(r'^\d+\.', line):
+                            line = re.sub(r'^\d+\.\s*', '', line)
+                        if prompt_type == 'fio':
+                            result.append(line.upper())
+                        else:
+                            result.append(line)
                     return result
     except Exception as e:
-        print(f"[DEEPSEEK] Error: {e}")
-    return normalize_fio(fio_text)
+        print(f"[DEEPSEEK] Batch error: {e}")
+    
+    # Fallback
+    if prompt_type == 'fio':
+        return [normalize_fio_local(f) for f in items]
+    return items
 
 
 def clean_phone(text):
@@ -296,7 +334,7 @@ async def get_client(ss):
 
 
 # ====================== BOT CONFIRMATIONS ======================
-async def send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, show_stop=True, show_skip=True):
+async def send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, topic_id=None):
     global stop_requested
     
     if stop_requested:
@@ -313,25 +351,28 @@ async def send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confi
     
     kb = {"inline_keyboard": buttons}
     
+    payload = {"chat_id": int(chat_id), "text": text, "reply_markup": kb}
+    if topic_id:
+        payload["message_thread_id"] = int(topic_id)
+    
     try:
         async with aiohttp.ClientSession() as s:
             await s.post(
                 f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                json={"chat_id": int(chat_id), "text": text, "reply_markup": kb}
+                json=payload
             )
-        asyncio.create_task(poll_updates_with_buttons(bot_token, chat_id, confirm_id))
+        asyncio.create_task(poll_updates_with_buttons(bot_token, chat_id, confirm_id, topic_id))
         return True
     except Exception as e:
         print(f"[CONFIRM] Error: {e}")
         return False
 
 
-async def poll_updates_with_buttons(bot_token, chat_id, confirm_id):
+async def poll_updates_with_buttons(bot_token, chat_id, confirm_id, topic_id=None):
     global stop_requested
     offset = 0
     print(f"[POLL] Starting poll for confirm_id={confirm_id}")
     
-    # Бесконечное ожидание
     while True:
         try:
             async with aiohttp.ClientSession() as s:
@@ -344,60 +385,76 @@ async def poll_updates_with_buttons(bot_token, chat_id, confirm_id):
                         for upd in data["result"]:
                             offset = upd["update_id"] + 1
                             cb = upd.get("callback_query")
-                            if cb and str(cb.get("message", {}).get("chat", {}).get("id")) == str(chat_id):
-                                cb_data = cb.get("data", "")
+                            if not cb:
+                                continue
+                            
+                            msg = cb.get("message", {})
+                            msg_chat_id = str(msg.get("chat", {}).get("id"))
+                            msg_topic_id = msg.get("message_thread_id")
+                            
+                            # Проверяем chat_id и topic_id
+                            if msg_chat_id != str(chat_id):
+                                continue
+                            if topic_id and msg_topic_id != int(topic_id):
+                                continue
+                            
+                            cb_data = cb.get("data", "")
+                            await s.post(
+                                f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery",
+                                json={"callback_query_id": cb["id"]}
+                            )
+                            msg_id = msg.get("message_id")
+                            
+                            payload = {"chat_id": int(chat_id), "message_id": msg_id}
+                            if topic_id:
+                                payload["message_thread_id"] = int(topic_id)
+                            
+                            if cb_data == f"confirm_{confirm_id}":
+                                payload["text"] = "CONFIRMED! Executing..."
                                 await s.post(
-                                    f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery",
-                                    json={"callback_query_id": cb["id"]}
+                                    f"https://api.telegram.org/bot{bot_token}/editMessageText",
+                                    json=payload
                                 )
-                                msg_id = cb.get("message", {}).get("message_id")
-                                
-                                if cb_data == f"confirm_{confirm_id}":
-                                    await s.post(
-                                        f"https://api.telegram.org/bot{bot_token}/editMessageText",
-                                        json={"chat_id": int(chat_id), "message_id": msg_id,
-                                              "text": "CONFIRMED! Executing..."}
-                                    )
-                                    pending_confirms[confirm_id] = "confirm"
-                                    print(f"[POLL] CONFIRMED")
-                                    return
+                                pending_confirms[confirm_id] = "confirm"
+                                print(f"[POLL] CONFIRMED")
+                                return
                                     
-                                elif cb_data == f"skip_{confirm_id}":
-                                    await s.post(
-                                        f"https://api.telegram.org/bot{bot_token}/editMessageText",
-                                        json={"chat_id": int(chat_id), "message_id": msg_id,
-                                              "text": "STAGE SKIPPED"}
-                                    )
-                                    pending_confirms[confirm_id] = "skip"
-                                    print(f"[POLL] SKIPPED")
-                                    return
+                            elif cb_data == f"skip_{confirm_id}":
+                                payload["text"] = "STAGE SKIPPED"
+                                await s.post(
+                                    f"https://api.telegram.org/bot{bot_token}/editMessageText",
+                                    json=payload
+                                )
+                                pending_confirms[confirm_id] = "skip"
+                                print(f"[POLL] SKIPPED")
+                                return
                                     
-                                elif cb_data == f"stop_{confirm_id}":
-                                    await s.post(
-                                        f"https://api.telegram.org/bot{bot_token}/editMessageText",
-                                        json={"chat_id": int(chat_id), "message_id": msg_id,
-                                              "text": "STOPPED! Finishing..."}
-                                    )
-                                    pending_confirms[confirm_id] = "stop"
-                                    stop_requested = True
-                                    print(f"[POLL] STOPPED")
-                                    return
+                            elif cb_data == f"stop_{confirm_id}":
+                                payload["text"] = "STOPPED! Finishing..."
+                                await s.post(
+                                    f"https://api.telegram.org/bot{bot_token}/editMessageText",
+                                    json=payload
+                                )
+                                pending_confirms[confirm_id] = "stop"
+                                stop_requested = True
+                                print(f"[POLL] STOPPED")
+                                return
                                     
-                                elif cb_data == f"again_{confirm_id}":
-                                    await s.post(
-                                        f"https://api.telegram.org/bot{bot_token}/editMessageText",
-                                        json={"chat_id": int(chat_id), "message_id": msg_id,
-                                              "text": "AGAIN requested! Resending..."}
-                                    )
-                                    pending_confirms[confirm_id] = "again"
-                                    print(f"[POLL] AGAIN")
-                                    return
+                            elif cb_data == f"again_{confirm_id}":
+                                payload["text"] = "AGAIN requested! Resending..."
+                                await s.post(
+                                    f"https://api.telegram.org/bot{bot_token}/editMessageText",
+                                    json=payload
+                                )
+                                pending_confirms[confirm_id] = "again"
+                                print(f"[POLL] AGAIN")
+                                return
         except Exception as e:
             print(f"[POLL] Error: {e}")
         await asyncio.sleep(1)
 
 
-async def safe_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, add_log):
+async def safe_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, add_log, topic_id=None):
     global stop_requested
     
     if stop_requested:
@@ -408,9 +465,8 @@ async def safe_confirm_with_buttons(bot_token, chat_id, stage_name, count, confi
         add_log("[v] Bot not configured - auto continue")
         return "confirm"
 
-    # Бесконечное ожидание подтверждения
     while True:
-        sent = await send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, True, True)
+        sent = await send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, topic_id)
         if not sent:
             add_log("[!] Failed to send to bot - retrying in 5s...")
             await asyncio.sleep(5)
@@ -418,7 +474,6 @@ async def safe_confirm_with_buttons(bot_token, chat_id, stage_name, count, confi
 
         add_log(f"[WAITING] Open bot for: {stage_name}")
         
-        # Ждём ответ бесконечно
         while True:
             if confirm_id in pending_confirms:
                 r = pending_confirms.pop(confirm_id)
@@ -434,30 +489,34 @@ async def safe_confirm_with_buttons(bot_token, chat_id, stage_name, count, confi
                     return "confirm"
                 if r == "again":
                     add_log(f"[v] AGAIN - resending confirmation for: {stage_name}")
-                    break  # выходим из внутреннего цикла, отправляем заново
+                    break
             await asyncio.sleep(0.5)
 
 
-async def send_file_to_bot(bot_token, chat_id, filepath, caption=""):
+async def send_file_to_bot(bot_token, chat_id, filepath, caption="", topic_id=None):
     try:
         async with aiohttp.ClientSession() as s:
             data = aiohttp.FormData()
             data.add_field('chat_id', str(chat_id))
             data.add_field('caption', caption)
             data.add_field('document', open(filepath, 'rb'))
+            if topic_id:
+                data.add_field('message_thread_id', str(topic_id))
             await s.post(f"https://api.telegram.org/bot{bot_token}/sendDocument", data=data)
             print(f"[BOT] File sent: {caption}")
     except Exception as e:
         print(f"[BOT] Error: {e}")
 
 
-async def send_zip_to_bot(bot_token, chat_id, zip_path, caption=""):
+async def send_zip_to_bot(bot_token, chat_id, zip_path, caption="", topic_id=None):
     try:
         async with aiohttp.ClientSession() as s:
             data = aiohttp.FormData()
             data.add_field('chat_id', str(chat_id))
             data.add_field('caption', caption)
             data.add_field('document', open(zip_path, 'rb'))
+            if topic_id:
+                data.add_field('message_thread_id', str(topic_id))
             await s.post(f"https://api.telegram.org/bot{bot_token}/sendDocument", data=data)
             print(f"[BOT] ZIP sent: {caption}")
     except Exception as e:
@@ -538,18 +597,22 @@ def parse_xlsx(path):
                 h['phone'] = col
             if any(k in v for k in ['SNILS']):
                 h['snils'] = col
+            if any(k in v for k in ['ADDR', 'АДРЕС']):
+                h['addr'] = col
 
         for row in range(2, ws.max_row + 1):
             try:
                 r = {}
                 if 'fio' in h:
-                    r['fio'] = normalize_fio(ws.cell(row=row, column=h['fio']).value)
+                    r['fio'] = normalize_fio_local(ws.cell(row=row, column=h['fio']).value)
                 if 'date' in h:
                     r['date'] = parse_date(ws.cell(row=row, column=h['date']).value)
                 if 'phone' in h:
                     r['phone'] = clean_phone(ws.cell(row=row, column=h['phone']).value)
                 if 'snils' in h:
                     r['snils'] = clean_snils(ws.cell(row=row, column=h['snils']).value)
+                if 'addr' in h:
+                    r['addr'] = str(ws.cell(row=row, column=h['addr']).value or "").strip()
                 if any(v for v in r.values() if v):
                     res.append(r)
             except Exception:
@@ -609,13 +672,13 @@ def fill_phones_from_response(ws, response_records):
     
     table_index = {}
     for row in range(2, ws.max_row + 1):
-        fio = normalize_fio(str(ws.cell(row=row, column=COL_FIO).value or ""))
+        fio = normalize_fio_local(str(ws.cell(row=row, column=COL_FIO).value or ""))
         date = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
         if fio and date and date != 'None':
             table_index[(fio, date)] = row
     
     for rec in response_records:
-        rec_fio = normalize_fio(rec.get('fio', ''))
+        rec_fio = normalize_fio_local(rec.get('fio', ''))
         rec_phone = rec.get('phone', '')
         rec_date = rec.get('date', '')
         
@@ -636,7 +699,7 @@ def fill_phones_from_response(ws, response_records):
                 print(f"[FILL-PHONES] Row {row}: FILLED")
         else:
             for row in range(2, ws.max_row + 1):
-                table_fio = normalize_fio(str(ws.cell(row=row, column=COL_FIO).value or ""))
+                table_fio = normalize_fio_local(str(ws.cell(row=row, column=COL_FIO).value or ""))
                 if table_fio == rec_fio:
                     existing = str(ws.cell(row=row, column=COL_PHONE).value or "").strip()
                     if not existing or existing == 'None':
@@ -661,7 +724,7 @@ def fill_snils_dates(ws, response_records):
     
     for rec in response_records:
         rec_snils = clean_snils(rec.get('snils', ''))
-        rec_fio = normalize_fio(rec.get('fio', ''))
+        rec_fio = normalize_fio_local(rec.get('fio', ''))
         rec_date = rec.get('date', '')
         
         if not rec_date:
@@ -680,7 +743,7 @@ def fill_snils_dates(ws, response_records):
         
         if not found and rec_fio:
             for row in range(2, ws.max_row + 1):
-                table_fio = normalize_fio(str(ws.cell(row=row, column=COL_FIO).value or ""))
+                table_fio = normalize_fio_local(str(ws.cell(row=row, column=COL_FIO).value or ""))
                 if table_fio == rec_fio:
                     existing = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
                     if not existing or existing == 'None':
@@ -696,9 +759,7 @@ def fill_snils_dates(ws, response_records):
 
 # ====================== DOBIV SAURON ======================
 async def dobiv_sauron(client, bot, fio, date, account_id, row_num, ws, wb, result_file, add_log):
-    """Добив через саурон - по одному запросу"""
     try:
-        # Нормализуем дату отдельно для каждого запроса
         norm_date = parse_date(date)
         if not norm_date:
             norm_date = date
@@ -726,7 +787,7 @@ async def dobiv_sauron(client, bot, fio, date, account_id, row_num, ws, wb, resu
 # ====================== FULL CYCLE (7 STAGES) ======================
 async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                          items_no_date, items_no_phone, items_snils,
-                         year_range, original_rows, tables_names=None):
+                         year_range, original_rows, tables_names=None, topic_id=None):
     global stop_requested
     stop_requested = False
     
@@ -741,10 +802,10 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     async def send_status(stage_label, file_path=None):
         if bot_token and chat_id:
             if file_path and os.path.exists(file_path):
-                await send_file_to_bot(bot_token, chat_id, file_path, f"Table after: {stage_label}")
+                await send_file_to_bot(bot_token, chat_id, file_path, f"Table after: {stage_label}", topic_id)
             else:
                 wb.save(result_file)
-                await send_file_to_bot(bot_token, chat_id, result_file, f"Table after: {stage_label}")
+                await send_file_to_bot(bot_token, chat_id, result_file, f"Table after: {stage_label}", topic_id)
 
     async def send_final_zip():
         if not bot_token or not chat_id:
@@ -756,7 +817,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         )
         
         if not split_result:
-            await send_file_to_bot(bot_token, chat_id, result_file, "FINAL FILE (all stages)")
+            await send_file_to_bot(bot_token, chat_id, result_file, "FINAL FILE (all stages)", topic_id)
             return
         
         zip_buffer = io.BytesIO()
@@ -796,7 +857,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         with open(zip_path, 'wb') as f:
             f.write(zip_buffer.getvalue())
         
-        await send_zip_to_bot(bot_token, chat_id, zip_path, "FINAL ZIP ARCHIVE (all tables + numbers.txt)")
+        await send_zip_to_bot(bot_token, chat_id, zip_path, "FINAL ZIP ARCHIVE (all tables + numbers.txt)", topic_id)
         add("[v] ZIP archive sent")
 
     # === CREATE TABLE ===
@@ -817,17 +878,54 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     wb.save(result_file)
     add(f"Table created: {ws.max_row - 1} rows")
 
-    # === DEEPSEEK NORMALIZATION ===
-    add("[DEEPSEEK] Normalizing FIO...")
+    # === ПАКЕТНАЯ НОРМАЛИЗАЦИЯ ФИО ===
+    add("[DEEPSEEK] Normalizing FIO in batches...")
+    fio_rows = []
+    fio_values = []
     for row in range(2, ws.max_row + 1):
         fio_val = str(ws.cell(row=row, column=COL_FIO).value or "").strip()
         if fio_val and fio_val != 'None':
-            normalized = await normalize_fio_deepseek(fio_val)
-            ws.cell(row=row, column=COL_FIO).value = normalized
-            if row % 10 == 0:
-                await asyncio.sleep(0.5)
+            fio_rows.append(row)
+            fio_values.append(fio_val)
+    
+    batch_size = 40
+    for batch_idx in range(0, len(fio_values), batch_size):
+        batch = fio_values[batch_idx:batch_idx + batch_size]
+        batch_rows = fio_rows[batch_idx:batch_idx + batch_size]
+        
+        normalized = await normalize_batch_deepseek(batch, 'fio')
+        for j, norm_val in enumerate(normalized):
+            if j < len(batch_rows):
+                ws.cell(row=batch_rows[j], column=COL_FIO).value = norm_val
+        
+        add(f"[DEEPSEEK] FIO batch {batch_idx//batch_size + 1}/{(len(fio_values)+batch_size-1)//batch_size}: {len(batch)} names")
+        await asyncio.sleep(0.3)
     wb.save(result_file)
-    add("[DEEPSEEK] Normalization complete")
+    add("[DEEPSEEK] FIO normalization complete")
+
+    # === ПАКЕТНАЯ НОРМАЛИЗАЦИЯ АДРЕСОВ ===
+    add("[DEEPSEEK] Normalizing addresses in batches...")
+    addr_rows = []
+    addr_values = []
+    for row in range(2, ws.max_row + 1):
+        addr_val = str(ws.cell(row=row, column=COL_ADDR).value or "").strip()
+        if addr_val and addr_val != 'None' and len(addr_val) > 5:
+            addr_rows.append(row)
+            addr_values.append(addr_val)
+    
+    for batch_idx in range(0, len(addr_values), batch_size):
+        batch = addr_values[batch_idx:batch_idx + batch_size]
+        batch_rows = addr_rows[batch_idx:batch_idx + batch_size]
+        
+        normalized = await normalize_batch_deepseek(batch, 'address')
+        for j, norm_val in enumerate(normalized):
+            if j < len(batch_rows):
+                ws.cell(row=batch_rows[j], column=COL_ADDR).value = norm_val
+        
+        add(f"[DEEPSEEK] Address batch {batch_idx//batch_size + 1}/{(len(addr_values)+batch_size-1)//batch_size}: {len(batch)} addresses")
+        await asyncio.sleep(0.3)
+    wb.save(result_file)
+    add("[DEEPSEEK] Address normalization complete")
 
     # === ANALYZE ===
     real_snils = []
@@ -845,7 +943,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         cid = f"s1_{int(time.time())}"
         add(f"STAGE 1: FIO+PHONE -> bot1 ({len(items_no_date)} rows)")
 
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 1: FIO+PHONE", len(items_no_date), cid, add)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 1: FIO+PHONE", len(items_no_date), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
@@ -902,7 +1000,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         cid = f"s2_{int(time.time())}"
         add(f"STAGE 2: SNILS -> bot1 ({len(real_snils)} snils)")
 
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 2: SNILS (bot1)", len(real_snils), cid, add)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 2: SNILS (bot1)", len(real_snils), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
@@ -957,7 +1055,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         cid = f"s3_{int(time.time())}"
         add(f"STAGE 3: SNILS -> bot2 ({len(snils_still_empty)} snils)")
 
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 3: SNILS (bot2)", len(snils_still_empty), cid, add)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 3: SNILS (bot2)", len(snils_still_empty), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
@@ -1001,7 +1099,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             add(f"STAGE 4: Year filter {yf}-{yt}")
 
             cid = f"s4_{int(time.time())}"
-            result = await safe_confirm_with_buttons(bot_token, chat_id, f"STAGE 4: Filter {yf}-{yt}", ws.max_row - 1, cid, add)
+            result = await safe_confirm_with_buttons(bot_token, chat_id, f"STAGE 4: Filter {yf}-{yt}", ws.max_row - 1, cid, add, topic_id)
             if result == "stop":
                 await send_final_zip()
                 return {"ok": True, "log": log, "stopped": True}
@@ -1046,7 +1144,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                 and date_val and date_val != 'None' and date_val != '0'
                 and (not phone_val or phone_val == 'None' or phone_val == '0')):
             items_no_phone_after_stage4.append({
-                'fio': normalize_fio(fio_val),
+                'fio': normalize_fio_local(fio_val),
                 'date': date_val
             })
 
@@ -1054,7 +1152,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         cid = f"s5_{int(time.time())}"
         add(f"STAGE 5: FIO+DATE -> bot1 ({len(items_no_phone_after_stage4)} rows)")
 
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 5: FIO+DATE (bot1)", len(items_no_phone_after_stage4), cid, add)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 5: FIO+DATE (bot1)", len(items_no_phone_after_stage4), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
@@ -1106,7 +1204,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                 and date_val and date_val != 'None' and date_val != '0'
                 and (not phone_val or phone_val == 'None' or phone_val == '0')):
             items_no_phone_after_stage5.append({
-                'fio': normalize_fio(fio_val),
+                'fio': normalize_fio_local(fio_val),
                 'date': date_val
             })
 
@@ -1114,7 +1212,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         cid = f"s6_{int(time.time())}"
         add(f"STAGE 6: FIO+DATE -> bot2 ({len(items_no_phone_after_stage5)} rows)")
 
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 6: FIO+DATE (bot2)", len(items_no_phone_after_stage5), cid, add)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 6: FIO+DATE (bot2)", len(items_no_phone_after_stage5), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
@@ -1160,7 +1258,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                 and date_val and date_val != 'None' and date_val != '0'
                 and (not phone_val or phone_val == 'None' or phone_val == '0')):
             items_no_phone_final.append({
-                'fio': normalize_fio(fio_val),
+                'fio': normalize_fio_local(fio_val),
                 'date': date_val
             })
 
@@ -1168,7 +1266,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         cid = f"s7_{int(time.time())}"
         add(f"STAGE 7: DOBIV -> bot2 ({len(items_no_phone_final)} rows)")
 
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 7: DOBIV (bot2)", len(items_no_phone_final), cid, add)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 7: DOBIV (bot2)", len(items_no_phone_final), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
@@ -1190,11 +1288,11 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                     
                     if phones:
                         for row in range(2, ws.max_row + 1):
-                            table_fio = normalize_fio(str(ws.cell(row=row, column=COL_FIO).value or ""))
+                            table_fio = normalize_fio_local(str(ws.cell(row=row, column=COL_FIO).value or ""))
                             table_date = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
                             existing_phone = str(ws.cell(row=row, column=COL_PHONE).value or "").strip()
 
-                            if table_fio == normalize_fio(fio) and table_date == date:
+                            if table_fio == normalize_fio_local(fio) and table_date == date:
                                 if not existing_phone or existing_phone == 'None':
                                     ws.cell(row=row, column=COL_PHONE).value = phones[0]
                                     add(f"[DOBIV] {fio} -> {phones[0]}")
@@ -1248,7 +1346,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
 # ====================== ENDPOINTS ======================
 async def handle_health(request):
-    return web.json_response({"ok": True, "message": "X Backend v13.1"})
+    return web.json_response({"ok": True, "message": "X Backend v13.4"})
 
 
 async def handle_root(request):
@@ -1385,6 +1483,7 @@ async def handle_full_probev(request):
         bot2 = d.get("bot2", "@proverim123_bot")
         bot_token = d.get("bot_token", "")
         chat_id = d.get("chat_id", "")
+        topic_id = d.get("topic_id", None)  # для супергрупп с темами
         year_range = d.get("year_range", "") or "1945-1975"
         items_no_date = d.get("items_no_date", [])
         items_no_phone = d.get("items_no_phone", [])
@@ -1395,7 +1494,6 @@ async def handle_full_probev(request):
         if not ss:
             return web.json_response({"ok": False, "error": "No session"}, status=400)
 
-        # Проверяем с блокировкой
         async with probev_lock:
             if ss in active_probevs:
                 task = active_probevs[ss]
@@ -1409,19 +1507,18 @@ async def handle_full_probev(request):
         print(f"[PROBEV] Bot1: {bot1}, Bot2: {bot2}")
         print(f"[PROBEV] Rows without date: {len(items_no_date)}")
         print(f"[PROBEV] Rows without phone: {len(items_no_phone)}")
+        print(f"[PROBEV] Topic ID: {topic_id or 'None'}")
         print(f"{'='*60}\n")
 
-        # Запускаем задачу с гарантированной очисткой
         async def run_and_cleanup():
             try:
                 result = await run_full_cycle(
                     ss, bot1, bot2, bot_token, chat_id,
                     items_no_date, items_no_phone, items_snils,
-                    year_range, original_rows, tables_names
+                    year_range, original_rows, tables_names, topic_id
                 )
                 return result
             finally:
-                # ВСЕГДА удаляем задачу из активных
                 async with probev_lock:
                     if ss in active_probevs:
                         del active_probevs[ss]
@@ -1436,7 +1533,6 @@ async def handle_full_probev(request):
 
     except Exception as e:
         traceback.print_exc()
-        # ВСЕГДА удаляем при ошибке
         async with probev_lock:
             if ss in active_probevs:
                 del active_probevs[ss]
@@ -1464,7 +1560,7 @@ async def on_startup(app):
     port = app["port"]
     msg = (
         "=" * 60 + "\n"
-        f"X Backend v13.1 STARTED (FIXED: state management)\n"
+        f"X Backend v13.4 STARTED (DeepSeek BATCH + АДРЕСА + СУПЕРГРУППЫ)\n"
         f"Host: 0.0.0.0  |  Port: {port}\n"
         + "=" * 60
     )
