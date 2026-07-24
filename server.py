@@ -1,4 +1,4 @@
-# server.py - X Backend v17.0 (РћРџРўРРњРР—РђР¦РРЇ: Г—10 Р±С‹СЃС‚СЂРµРµ, С„РёР»СЊС‚СЂ РґР°С‚ РїРµСЂРІС‹Р№, РєСЌС€ СЃС‚СЂРѕРє, РїР°СЂР°Р»Р»РµР»СЊРЅС‹Рµ Р±РѕС‚С‹, batch 200)
+﻿# server.py - X Backend v17.0 (РћРџРўРРњРР—РђР¦РРЇ: Г—10 Р±С‹СЃС‚СЂРµРµ, С„РёР»СЊС‚СЂ РґР°С‚ РїРµСЂРІС‹Р№, РєСЌС€ СЃС‚СЂРѕРє, РїР°СЂР°Р»Р»РµР»СЊРЅС‹Рµ Р±РѕС‚С‹, batch 200)
 
 # РЈСЃС‚Р°РЅРѕРІРєР°: pip install aiohttp telethon openpyxl
 
@@ -1970,13 +1970,29 @@ async def handle_health(request):
 
 async def handle_root(request):
     try:
-        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "СЃР°Р№С‚.html")
+        server_dir = os.path.dirname(os.path.abspath(__file__))
+        # Ищем любой .html файл в директории сервера (устойчиво к проблемам кодировки имени)
+        html_path = None
+        for fname in os.listdir(server_dir):
+            if fname.lower().endswith('.html'):
+                html_path = os.path.join(server_dir, fname)
+                break
+        if not html_path or not os.path.isfile(html_path):
+            print(f"[ROOT] HTML-файл не найден в {server_dir}")
+            return web.Response(
+                text="<html><body><h1>X Backend</h1><p>HTML-файл не найден. Проверьте наличие .html в папке сервера.</p></body></html>",
+                content_type="text/html"
+            )
         with open(html_path, "r", encoding="utf-8") as f:
             html = f.read()
         return web.Response(text=html, content_type="text/html")
     except Exception as e:
-        print(f"[ROOT] РћС€РёР±РєР°: {e}")
-        return web.Response(text="OK", content_type="text/plain")
+        print(f"[ROOT] Ошибка загрузки HTML: {e}")
+        traceback.print_exc()
+        return web.Response(
+            text=f"<html><body><h1>Ошибка сервера</h1><pre>{e}</pre></body></html>",
+            content_type="text/html"
+        )
 
 async def handle_upload_zip(request):
     try:
