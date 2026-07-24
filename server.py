@@ -1,4 +1,4 @@
-# server.py - X Backend v14.0 (ПЕРЕИМЕНОВАНИЕ ФАЙЛОВ ПО АДРЕСУ + ПОИСК ИНН В ГРУППЕ)
+# server.py - X Backend v14.1 (РУССКИЙ ИНТЕРФЕЙС + ПРОБИВЫ)
 # Установка: pip install aiohttp telethon openpyxl
 # Запуск: python server.py
 # Порт: 8765
@@ -66,12 +66,9 @@ def normalize_fio_local(raw):
 
 
 def normalize_address_local(raw):
-    """Локальная нормализация адреса (без API)"""
     if not raw:
         return ""
-    # Убираем лишние пробелы, приводим к нижнему регистру
     s = str(raw).strip().lower()
-    # Заменяем распространённые сокращения
     replacements = {
         'обл': 'область', 'обл.': 'область',
         'г': 'город', 'г.': 'город',
@@ -83,13 +80,11 @@ def normalize_address_local(raw):
     }
     for old, new in replacements.items():
         s = s.replace(old, new)
-    # Убираем лишние пробелы
     s = re.sub(r'\s+', ' ', s).strip()
     return s
 
 
 async def normalize_batch_deepseek(items, prompt_type='fio'):
-    """Пакетная нормализация через DeepSeek"""
     if not items:
         return []
     
@@ -108,10 +103,10 @@ async def normalize_batch_deepseek(items, prompt_type='fio'):
             }
             
             if prompt_type == 'fio':
-                system_prompt = "Normalize each FIO to format: LASTNAME FIRSTNAME PATRONYMIC. Return only normalized list, one per line, numbered. Use UPPERCASE."
+                system_prompt = "Приведи каждое ФИО к формату: ФАМИЛИЯ ИМЯ ОТЧЕСТВО. Верни только список, по одному на строку, с номерами. ВСЕ ЗАГЛАВНЫЕ."
                 items_text = "\n".join([f"{i+1}. {f}" for i, f in enumerate(items)])
             elif prompt_type == 'address':
-                system_prompt = "Normalize each address to format: CITY, STREET, HOUSE, KV. Example: 'Тольятти, Голосова, 26, кв. 33'. Remove 'кв.' from output. Return only normalized list, one per line, numbered."
+                system_prompt = "Приведи каждый адрес к формату: ГОРОД, УЛИЦА, ДОМ, КВАРТИРА. Пример: 'Тольятти, Голосова, 26, 33'. Убери 'кв.' из вывода. Верни только список, по одному на строку, с номерами."
                 items_text = "\n".join([f"{i+1}. {a}" for i, a in enumerate(items)])
             else:
                 return items
@@ -120,7 +115,7 @@ async def normalize_batch_deepseek(items, prompt_type='fio'):
                 "model": "deepseek-chat",
                 "messages": [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Normalize these:\n{items_text}"}
+                    {"role": "user", "content": f"Нормализуй:\n{items_text}"}
                 ],
                 "temperature": 0.1,
                 "max_tokens": 800
@@ -139,7 +134,6 @@ async def normalize_batch_deepseek(items, prompt_type='fio'):
                         if prompt_type == 'fio':
                             result.append(line.upper())
                         else:
-                            # Убираем "кв." из адреса
                             line = re.sub(r'\s*кв\.?\s*', ', ', line)
                             line = re.sub(r',\s*,', ',', line)
                             result.append(line)
@@ -147,7 +141,6 @@ async def normalize_batch_deepseek(items, prompt_type='fio'):
     except Exception as e:
         print(f"[DEEPSEEK] Batch error: {e}")
     
-    # Fallback
     if prompt_type == 'fio':
         return [normalize_fio_local(f) for f in items]
     return [normalize_address_local(a) for a in items]
@@ -221,7 +214,6 @@ def extract_phones_from_text(text):
 
 
 def extract_inn_from_text(text):
-    """Извлекает ИНН (12 цифр) из текста"""
     inn_match = re.search(r'\b\d{12}\b', text)
     if inn_match:
         return inn_match.group()
@@ -240,7 +232,7 @@ def merge_tables(tables_data):
             addr_idx = i
             break
     
-    table_num_col = 'N tablicy'
+    table_num_col = 'N таблицы'
     new_headers = []
     if addr_idx >= 0:
         new_headers = base_headers[:addr_idx] + [table_num_col] + base_headers[addr_idx:]
@@ -269,7 +261,7 @@ def merge_tables(tables_data):
 def split_by_table_num(headers, rows):
     table_num_idx = -1
     for i, h in enumerate(headers):
-        if h == 'N tablicy':
+        if h == 'N таблицы':
             table_num_idx = i
             break
     
@@ -298,7 +290,7 @@ def split_by_table_num(headers, rows):
 
 
 def geo_filter(headers, rows):
-    GEO_COLS = ['Nomer', 'Adress', 'FIO', 'Data', 'SNILS']
+    GEO_COLS = ['Номер', 'Адресс', 'ФИО', 'Дата', 'СНИЛС']
     
     idx_map = {}
     for col in GEO_COLS:
@@ -316,13 +308,13 @@ def geo_filter(headers, rows):
     
     for col, idx in idx_map.items():
         if idx == -1:
-            raise ValueError(f'Column not found: {col}')
+            raise ValueError(f'Колонка не найдена: {col}')
     
     out_rows = []
     phones = set()
     
     for row in rows:
-        phone_raw = row[idx_map['Nomer']] if idx_map['Nomer'] < len(row) else ''
+        phone_raw = row[idx_map['Номер']] if idx_map['Номер'] < len(row) else ''
         phone_clean = clean_phone(phone_raw)
         
         phones_in_cell = []
@@ -340,10 +332,10 @@ def geo_filter(headers, rows):
                 phones.add(ph)
             out_rows.append([
                 ph,
-                row[idx_map['Adress']] if idx_map['Adress'] < len(row) else '',
-                row[idx_map['FIO']] if idx_map['FIO'] < len(row) else '',
-                row[idx_map['Data']] if idx_map['Data'] < len(row) else '',
-                row[idx_map['SNILS']] if idx_map['SNILS'] < len(row) else ''
+                row[idx_map['Адресс']] if idx_map['Адресс'] < len(row) else '',
+                row[idx_map['ФИО']] if idx_map['ФИО'] < len(row) else '',
+                row[idx_map['Дата']] if idx_map['Дата'] < len(row) else '',
+                row[idx_map['СНИЛС']] if idx_map['СНИЛС'] < len(row) else ''
             ])
     
     return {'headers': GEO_COLS, 'rows': out_rows, 'phones': phones}
@@ -363,23 +355,23 @@ async def get_client(ss):
         user_clients[ss] = c
         return c
     await c.disconnect()
-    raise Exception("Session invalid")
+    raise Exception("Сессия недействительна")
 
 
-# ====================== BOT CONFIRMATIONS ======================
+# ====================== ПОДТВЕРЖДЕНИЯ ЧЕРЕЗ БОТА ======================
 async def send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, topic_id=None):
     global stop_requested
     
     if stop_requested:
         return False
     
-    text = f"CONFIRM PROBEV\n\nStage: {stage_name}\nRows: {count}"
+    text = f"ПОДТВЕРДИТЕ ПРОБИВ\n\nЭтап: {stage_name}\nСтрок: {count}"
     
     buttons = [
-        [{"text": "CONFIRM", "callback_data": f"confirm_{confirm_id}"}],
-        [{"text": "SKIP", "callback_data": f"skip_{confirm_id}"}],
-        [{"text": "STOP ALL", "callback_data": f"stop_{confirm_id}"}],
-        [{"text": "AGAIN", "callback_data": f"again_{confirm_id}"}]
+        [{"text": "ПОДТВЕРДИТЬ", "callback_data": f"confirm_{confirm_id}"}],
+        [{"text": "ПРОПУСТИТЬ", "callback_data": f"skip_{confirm_id}"}],
+        [{"text": "ОСТАНОВИТЬ ВСЁ", "callback_data": f"stop_{confirm_id}"}],
+        [{"text": "ЕЩЁ РАЗ", "callback_data": f"again_{confirm_id}"}]
     ]
     
     kb = {"inline_keyboard": buttons}
@@ -397,14 +389,14 @@ async def send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confi
         asyncio.create_task(poll_updates_with_buttons(bot_token, chat_id, confirm_id, topic_id))
         return True
     except Exception as e:
-        print(f"[CONFIRM] Error: {e}")
+        print(f"[CONFIRM] Ошибка: {e}")
         return False
 
 
 async def poll_updates_with_buttons(bot_token, chat_id, confirm_id, topic_id=None):
     global stop_requested
     offset = 0
-    print(f"[POLL] Starting poll for confirm_id={confirm_id}")
+    print(f"[POLL] Начинаю опрос для confirm_id={confirm_id}")
     
     while True:
         try:
@@ -442,47 +434,47 @@ async def poll_updates_with_buttons(bot_token, chat_id, confirm_id, topic_id=Non
                                 payload["message_thread_id"] = int(topic_id)
                             
                             if cb_data == f"confirm_{confirm_id}":
-                                payload["text"] = "CONFIRMED! Executing..."
+                                payload["text"] = "ПОДТВЕРЖДЕНО! Выполняю..."
                                 await s.post(
                                     f"https://api.telegram.org/bot{bot_token}/editMessageText",
                                     json=payload
                                 )
                                 pending_confirms[confirm_id] = "confirm"
-                                print(f"[POLL] CONFIRMED")
+                                print(f"[POLL] ПОДТВЕРЖДЕНО")
                                 return
                                     
                             elif cb_data == f"skip_{confirm_id}":
-                                payload["text"] = "STAGE SKIPPED"
+                                payload["text"] = "ЭТАП ПРОПУЩЕН"
                                 await s.post(
                                     f"https://api.telegram.org/bot{bot_token}/editMessageText",
                                     json=payload
                                 )
                                 pending_confirms[confirm_id] = "skip"
-                                print(f"[POLL] SKIPPED")
+                                print(f"[POLL] ПРОПУЩЕН")
                                 return
                                     
                             elif cb_data == f"stop_{confirm_id}":
-                                payload["text"] = "STOPPED! Finishing..."
+                                payload["text"] = "ОСТАНОВЛЕНО! Завершаю..."
                                 await s.post(
                                     f"https://api.telegram.org/bot{bot_token}/editMessageText",
                                     json=payload
                                 )
                                 pending_confirms[confirm_id] = "stop"
                                 stop_requested = True
-                                print(f"[POLL] STOPPED")
+                                print(f"[POLL] ОСТАНОВЛЕНО")
                                 return
                                     
                             elif cb_data == f"again_{confirm_id}":
-                                payload["text"] = "AGAIN requested! Resending..."
+                                payload["text"] = "ЕЩЁ РАЗ! Отправляю заново..."
                                 await s.post(
                                     f"https://api.telegram.org/bot{bot_token}/editMessageText",
                                     json=payload
                                 )
                                 pending_confirms[confirm_id] = "again"
-                                print(f"[POLL] AGAIN")
+                                print(f"[POLL] ЕЩЁ РАЗ")
                                 return
         except Exception as e:
-            print(f"[POLL] Error: {e}")
+            print(f"[POLL] Ошибка: {e}")
         await asyncio.sleep(1)
 
 
@@ -490,37 +482,37 @@ async def safe_confirm_with_buttons(bot_token, chat_id, stage_name, count, confi
     global stop_requested
     
     if stop_requested:
-        add_log("[x] Stop requested")
+        add_log("[x] Остановка запрошена")
         return "stop"
     
     if not bot_token or not chat_id:
-        add_log("[v] Bot not configured - auto continue")
+        add_log("[v] Бот не настроен - продолжаю автоматически")
         return "confirm"
 
     while True:
         sent = await send_confirm_with_buttons(bot_token, chat_id, stage_name, count, confirm_id, topic_id)
         if not sent:
-            add_log("[!] Failed to send to bot - retrying in 5s...")
+            add_log("[!] Не удалось отправить в бот - повтор через 5с...")
             await asyncio.sleep(5)
             continue
 
-        add_log(f"[WAITING] Open bot for: {stage_name}")
+        add_log(f"[ОЖИДАНИЕ] Откройте бот для: {stage_name}")
         
         while True:
             if confirm_id in pending_confirms:
                 r = pending_confirms.pop(confirm_id)
                 if r == "stop":
                     stop_requested = True
-                    add_log("[x] STOP ALL PROCESSES")
+                    add_log("[x] ОСТАНОВКА ВСЕХ ПРОЦЕССОВ")
                     return "stop"
                 if r == "skip":
-                    add_log(f"[v] SKIPPED: {stage_name}")
+                    add_log(f"[v] ПРОПУЩЕН: {stage_name}")
                     return "skip"
                 if r == "confirm":
-                    add_log(f"[v] CONFIRMED: {stage_name}")
+                    add_log(f"[v] ПОДТВЕРЖДЕНО: {stage_name}")
                     return "confirm"
                 if r == "again":
-                    add_log(f"[v] AGAIN - resending confirmation for: {stage_name}")
+                    add_log(f"[v] ЕЩЁ РАЗ - повтор для: {stage_name}")
                     break
             await asyncio.sleep(0.5)
 
@@ -535,9 +527,9 @@ async def send_file_to_bot(bot_token, chat_id, filepath, caption="", topic_id=No
             if topic_id:
                 data.add_field('message_thread_id', str(topic_id))
             await s.post(f"https://api.telegram.org/bot{bot_token}/sendDocument", data=data)
-            print(f"[BOT] File sent: {caption}")
+            print(f"[BOT] Файл отправлен: {caption}")
     except Exception as e:
-        print(f"[BOT] Error: {e}")
+        print(f"[BOT] Ошибка: {e}")
 
 
 async def send_zip_to_bot(bot_token, chat_id, zip_path, caption="", topic_id=None):
@@ -550,20 +542,20 @@ async def send_zip_to_bot(bot_token, chat_id, zip_path, caption="", topic_id=Non
             if topic_id:
                 data.add_field('message_thread_id', str(topic_id))
             await s.post(f"https://api.telegram.org/bot{bot_token}/sendDocument", data=data)
-            print(f"[BOT] ZIP sent: {caption}")
+            print(f"[BOT] ZIP отправлен: {caption}")
     except Exception as e:
-        print(f"[BOT] ZIP error: {e}")
+        print(f"[BOT] ZIP ошибка: {e}")
 
 
-# ====================== BOT OPERATIONS ======================
+# ====================== РАБОТА С БОТАМИ ПРОБИВА ======================
 async def clear_bot(client, bot):
     try:
         e = await client.get_entity(bot)
         await client.send_message(e, "/start")
         await asyncio.sleep(2)
-        print(f"[BOT] /start sent to {bot}")
+        print(f"[BOT] /start отправлен в {bot}")
     except Exception as ex:
-        print(f"[BOT] Error: {ex}")
+        print(f"[BOT] Ошибка: {ex}")
 
 
 async def click_btn(client, bot, text, retries=3):
@@ -579,18 +571,18 @@ async def click_btn(client, bot, text, retries=3):
                             if btn.text and text.lower() in btn.text.lower():
                                 await btn.click()
                                 await asyncio.sleep(2)
-                                print(f"[BOT] Clicked '{btn.text}'")
+                                print(f"[BOT] Нажата кнопка '{btn.text}' в {bot}")
                                 return True
-            print(f"[BOT] Button '{text}' not found (attempt {attempt+1})")
+            print(f"[BOT] Кнопка '{text}' не найдена в {bot} (попытка {attempt+1})")
         except Exception as ex:
-            print(f"[BOT] Error: {ex}")
+            print(f"[BOT] Ошибка: {ex}")
     return False
 
 
 async def wait_xlsx(client, bot, timeout=180, since_msg_id=None):
     e = await client.get_entity(bot)
     start = time.time()
-    print(f"[BOT] Waiting for XLSX from {bot}...")
+    print(f"[BOT] Ожидаю XLSX от {bot}...")
     while time.time() - start < timeout:
         msgs = await client.get_messages(e, limit=5)
         for msg in msgs:
@@ -600,14 +592,14 @@ async def wait_xlsx(client, bot, timeout=180, since_msg_id=None):
                 continue
             for a in msg.document.attributes:
                 if isinstance(a, DocumentAttributeFilename) and a.file_name.endswith('.xlsx'):
-                    print(f"[BOT] Received XLSX: {a.file_name}")
+                    print(f"[BOT] Получен XLSX: {a.file_name}")
                     return msg
         await asyncio.sleep(3)
-    print(f"[BOT] XLSX not received")
+    print(f"[BOT] XLSX не получен")
     return None
 
 
-# ====================== PARSE XLSX ======================
+# ====================== ПАРСИНГ XLSX ======================
 def parse_xlsx(path):
     res = []
     try:
@@ -617,19 +609,19 @@ def parse_xlsx(path):
 
         for col in range(1, ws.max_column + 1):
             v = str(ws.cell(row=1, column=col).value or "").upper().strip()
-            if any(k in v for k in ['INN', 'PASSPORT']):
+            if any(k in v for k in ['ИНН', 'INN', 'ПАСПОРТ', 'PASSPORT']):
                 continue
-            if any(k in v for k in ['FIO', 'NAME']):
+            if any(k in v for k in ['ФИО', 'FIO', 'ИМЯ', 'ФАМИЛИЯ', 'NAME']):
                 h['fio'] = col
-            if any(k in v for k in ['DATE', 'BIRTH']):
+            if any(k in v for k in ['ДАТА', 'DATE', 'РОЖД', 'BIRTH']):
                 h['date'] = col
-            if any(k in v for k in ['PHONE', 'TEL']):
+            if any(k in v for k in ['ТЕЛЕФОН', 'PHONE', 'ТЕЛ']):
                 h['phone'] = col
-            elif 'NOMER' in v and 'PASSPORT' not in v:
+            elif 'НОМЕР' in v and 'ПАСПОРТ' not in v and 'ИНН' not in v:
                 h['phone'] = col
-            if any(k in v for k in ['SNILS']):
+            if any(k in v for k in ['СНИЛС', 'SNILS']):
                 h['snils'] = col
-            if any(k in v for k in ['ADDR', 'АДРЕС', 'АДРЕСС']):
+            if any(k in v for k in ['АДРЕС', 'АДРЕСС', 'ADDR', 'ADDRESS']):
                 h['addr'] = col
 
         for row in range(2, ws.max_row + 1):
@@ -651,11 +643,11 @@ def parse_xlsx(path):
                 pass
         return res
     except Exception as e:
-        print(f"[PARSE] Error: {e}")
+        print(f"[PARSE] Ошибка: {e}")
         return []
 
 
-# ====================== FILL TABLE ======================
+# ====================== ЗАПОЛНЕНИЕ ТАБЛИЦЫ ======================
 COL_NO = 1
 COL_FIO = 2
 COL_DATE = 3
@@ -666,7 +658,7 @@ COL_ADDR = 6
 
 def fill_dates_from_response(ws, response_records):
     filled = 0
-    print(f"[FILL-DATES] Starting. Responses: {len(response_records)}")
+    print(f"[FILL-DATES] Начинаю заполнение дат. Ответов: {len(response_records)}")
     
     table_phones = {}
     for row in range(2, ws.max_row + 1):
@@ -692,15 +684,15 @@ def fill_dates_from_response(ws, response_records):
             if not existing or existing == 'None':
                 ws.cell(row=row, column=COL_DATE).value = rec_date
                 filled += 1
-                print(f"[FILL-DATES] Row {row}: FILLED")
+                print(f"[FILL-DATES] Строка {row}: ЗАПОЛНЕНО")
     
-    print(f"[FILL-DATES] Total filled: {filled}")
+    print(f"[FILL-DATES] ИТОГО заполнено дат: {filled}")
     return filled
 
 
 def fill_phones_from_response(ws, response_records):
     filled = 0
-    print(f"[FILL-PHONES] Starting. Responses: {len(response_records)}")
+    print(f"[FILL-PHONES] Начинаю заполнение номеров. Ответов: {len(response_records)}")
     
     table_index = {}
     for row in range(2, ws.max_row + 1):
@@ -728,7 +720,7 @@ def fill_phones_from_response(ws, response_records):
             if not existing or existing == 'None':
                 ws.cell(row=row, column=COL_PHONE).value = clean_rec
                 filled += 1
-                print(f"[FILL-PHONES] Row {row}: FILLED")
+                print(f"[FILL-PHONES] Строка {row}: ЗАПОЛНЕНО")
         else:
             for row in range(2, ws.max_row + 1):
                 table_fio = normalize_fio_local(str(ws.cell(row=row, column=COL_FIO).value or ""))
@@ -737,16 +729,16 @@ def fill_phones_from_response(ws, response_records):
                     if not existing or existing == 'None':
                         ws.cell(row=row, column=COL_PHONE).value = clean_rec
                         filled += 1
-                        print(f"[FILL-PHONES] Row {row} (fallback): FILLED")
+                        print(f"[FILL-PHONES] Строка {row} (запасной вариант): ЗАПОЛНЕНО")
                     break
     
-    print(f"[FILL-PHONES] Total filled: {filled}")
+    print(f"[FILL-PHONES] ИТОГО заполнено номеров: {filled}")
     return filled
 
 
 def fill_snils_dates(ws, response_records):
     filled = 0
-    print(f"[FILL-SNILS] Starting")
+    print(f"[FILL-SNILS] Начинаю заполнение дат по СНИЛС")
     
     table_snils = {}
     for row in range(2, ws.max_row + 1):
@@ -770,7 +762,7 @@ def fill_snils_dates(ws, response_records):
             if not existing or existing == 'None':
                 ws.cell(row=row, column=COL_DATE).value = rec_date
                 filled += 1
-                print(f"[FILL-SNILS] Row {row}: FILLED by SNILS")
+                print(f"[FILL-SNILS] Строка {row}: ЗАПОЛНЕНО по СНИЛС")
                 found = True
         
         if not found and rec_fio:
@@ -781,15 +773,15 @@ def fill_snils_dates(ws, response_records):
                     if not existing or existing == 'None':
                         ws.cell(row=row, column=COL_DATE).value = rec_date
                         filled += 1
-                        print(f"[FILL-SNILS] Row {row} (fallback): FILLED")
+                        print(f"[FILL-SNILS] Строка {row} (запасной вариант): ЗАПОЛНЕНО")
                     found = True
                     break
     
-    print(f"[FILL-SNILS] Total filled: {filled}")
+    print(f"[FILL-SNILS] ИТОГО заполнено дат: {filled}")
     return filled
 
 
-# ====================== DOBIV SAURON ======================
+# ====================== ДОБИВ ЧЕРЕЗ САУРОН ======================
 async def dobiv_sauron(client, bot, fio, date, account_id, row_num, ws, wb, result_file, add_log):
     try:
         norm_date = parse_date(date)
@@ -797,36 +789,30 @@ async def dobiv_sauron(client, bot, fio, date, account_id, row_num, ws, wb, resu
             norm_date = date
         
         query = f"{fio} {norm_date}"
-        add_log(f"[DOBIV] Acc {account_id}, row {row_num}: {query}")
+        add_log(f"[ДОБИВ] Акк {account_id}, строка {row_num}: {query}")
         
         await client.send_message(bot, query)
         await asyncio.sleep(5)
         
         async for msg in client.iter_messages(bot, limit=10):
-            if msg.text and ("REPORT" in msg.text or "PHONES" in msg.text):
+            if msg.text and ("ОТЧЕТ" in msg.text or "ТЕЛЕФОНЫ" in msg.text):
                 phones = extract_phones_from_text(msg.text)
                 if phones:
-                    add_log(f"[DOBIV] Found phones: {phones}")
+                    add_log(f"[ДОБИВ] Найдены телефоны: {phones}")
                     return phones
                 break
         
         return []
     except Exception as e:
-        add_log(f"[DOBIV] Error: {e}")
+        add_log(f"[ДОБИВ] Ошибка: {e}")
         return []
 
 
 # ====================== ПОИСК ИНН В ГРУППЕ ======================
 async def find_inn_in_group(client, group_id, address, topic_id=None):
-    """
-    Ищет в группе/теме сообщение с адресом, извлекает ИНН
-    Возвращает: (inn, found) или (None, False)
-    """
     try:
-        # Получаем сущность группы
         entity = await client.get_entity(int(group_id))
         
-        # Ищем сообщения с адресом (ищем по частям адреса)
         search_parts = address.split(',')
         search_terms = []
         for part in search_parts:
@@ -834,29 +820,24 @@ async def find_inn_in_group(client, group_id, address, topic_id=None):
             if part and len(part) > 3:
                 search_terms.append(part)
         
-        # Ищем сообщения
         async for msg in client.iter_messages(entity, limit=100):
             if not msg.text:
                 continue
             
-            # Проверяем, есть ли адрес в сообщении
             msg_lower = msg.text.lower()
             address_lower = address.lower()
             
-            # Ищем совпадение по ключевым частям
             match_count = 0
-            for term in search_terms[:3]:  # берём первые 3 части
+            for term in search_terms[:3]:
                 if term.lower() in msg_lower:
                     match_count += 1
             
-            # Если совпало хотя бы 2 части - считаем, что это оно
             if match_count >= 2:
-                # Ищем ИНН
                 inn = extract_inn_from_text(msg.text)
                 if inn:
                     return inn, True
                 else:
-                    return None, True  # сообщение найдено, но ИНН нет
+                    return None, True
         
         return None, False
     except Exception as e:
@@ -866,19 +847,13 @@ async def find_inn_in_group(client, group_id, address, topic_id=None):
 
 # ====================== ПЕРЕИМЕНОВАНИЕ ФАЙЛОВ ======================
 async def rename_files_by_address(ws, client, group_id, topic_id, add_log, tables_names):
-    """
-    Переименовывает файлы по адресу из колонки "Адресс"
-    Ищет ИНН в группе/теме
-    Имя файла: ИНН_Адрес.xlsx или УК_Адрес.xlsx
-    """
     if not group_id:
-        add_log("[RENAME] Группа не указана - пропускаю переименование")
+        add_log("[ПЕРЕИМЕНОВАНИЕ] Группа не указана - пропускаю")
         return tables_names
     
-    add_log("[RENAME] Начинаю переименование файлов по адресам...")
+    add_log("[ПЕРЕИМЕНОВАНИЕ] Начинаю переименование по адресам...")
     
-    # Собираем уникальные адреса из таблицы
-    address_map = {}  # {table_num: address}
+    address_map = {}
     table_nums = {}
     
     for row in range(2, ws.max_row + 1):
@@ -890,31 +865,27 @@ async def rename_files_by_address(ws, client, group_id, topic_id, add_log, table
                 address_map[table_num] = addr
                 table_nums[table_num] = row
     
-    add_log(f"[RENAME] Найдено {len(address_map)} уникальных адресов")
+    add_log(f"[ПЕРЕИМЕНОВАНИЕ] Найдено {len(address_map)} уникальных адресов")
     
-    # Для каждого адреса ищем ИНН в группе
     new_names = {}
     for table_num, addr in address_map.items():
-        # Нормализуем адрес для поиска (убираем "кв.")
         clean_addr = re.sub(r'\s*кв\.?\s*\d+', '', addr).strip()
         clean_addr = re.sub(r',\s*,', ',', clean_addr)
         
-        add_log(f"[RENAME] Ищу ИНН для: {clean_addr}")
+        add_log(f"[ПЕРЕИМЕНОВАНИЕ] Ищу ИНН для: {clean_addr}")
         
         inn, found = await find_inn_in_group(client, group_id, clean_addr, topic_id)
         
         if found and inn:
             new_name = f"{inn}_{clean_addr}"
-            add_log(f"[RENAME] Найден ИНН: {inn} -> {new_name}")
+            add_log(f"[ПЕРЕИМЕНОВАНИЕ] Найден ИНН: {inn} -> {new_name}")
         else:
             new_name = f"УК_{clean_addr}"
-            add_log(f"[RENAME] ИНН не найден -> {new_name}")
+            add_log(f"[ПЕРЕИМЕНОВАНИЕ] ИНН не найден -> {new_name}")
         
-        # Очищаем имя файла от недопустимых символов
         new_name = re.sub(r'[<>:"/\\|?*]', '_', new_name)
         new_names[table_num] = new_name
     
-    # Обновляем имена таблиц
     updated_names = []
     for i, name in enumerate(tables_names):
         table_num = str(i + 1)
@@ -923,11 +894,11 @@ async def rename_files_by_address(ws, client, group_id, topic_id, add_log, table
         else:
             updated_names.append(name)
     
-    add_log(f"[RENAME] Переименовано {len(new_names)} файлов")
+    add_log(f"[ПЕРЕИМЕНОВАНИЕ] Переименовано {len(new_names)} файлов")
     return updated_names
 
 
-# ====================== FULL CYCLE (7 STAGES) ======================
+# ====================== ПОЛНЫЙ ЦИКЛ ПРОБИВА (7 ЭТАПОВ) ======================
 async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                          items_no_date, items_no_phone, items_snils,
                          year_range, original_rows, tables_names=None, topic_id=None, group_id=None):
@@ -945,10 +916,10 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     async def send_status(stage_label, file_path=None):
         if bot_token and chat_id:
             if file_path and os.path.exists(file_path):
-                await send_file_to_bot(bot_token, chat_id, file_path, f"Table after: {stage_label}", topic_id)
+                await send_file_to_bot(bot_token, chat_id, file_path, f"Таблица после: {stage_label}", topic_id)
             else:
                 wb.save(result_file)
-                await send_file_to_bot(bot_token, chat_id, result_file, f"Table after: {stage_label}", topic_id)
+                await send_file_to_bot(bot_token, chat_id, result_file, f"Таблица после: {stage_label}", topic_id)
 
     async def send_final_zip():
         if not bot_token or not chat_id:
@@ -960,10 +931,9 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         )
         
         if not split_result:
-            await send_file_to_bot(bot_token, chat_id, result_file, "FINAL FILE (all stages)", topic_id)
+            await send_file_to_bot(bot_token, chat_id, result_file, "ИТОГОВЫЙ ФАЙЛ (все этапы)", topic_id)
             return
         
-        # Переименовываем файлы
         final_names = await rename_files_by_address(ws, client, group_id, topic_id, add, tables_names)
         
         zip_buffer = io.BytesIO()
@@ -985,35 +955,34 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                     wb_temp.save(xlsx_buffer)
                     xlsx_buffer.seek(0)
                     
-                    # Используем переименованное имя
                     idx = int(table_num) - 1
                     if idx < len(final_names):
                         name = f"{final_names[idx]}.xlsx"
                     else:
-                        name = f"GEO_{table_num}.xlsx"
+                        name = f"ГЕО_{table_num}.xlsx"
                     zf.writestr(name, xlsx_buffer.getvalue())
                 except Exception as e:
-                    add(f"[ZIP] Table {table_num} error: {e}")
+                    add(f"[ZIP] Ошибка таблицы {table_num}: {e}")
                     continue
             
             if phones_all:
                 zf.writestr('numbers.txt', '\n'.join(sorted(phones_all)))
             else:
-                zf.writestr('numbers.txt', '(no valid phones)')
+                zf.writestr('numbers.txt', '(нет валидных номеров)')
         
         zip_buffer.seek(0)
         zip_path = os.path.join(TEMP_DIR, f"result_{int(time.time())}.zip")
         with open(zip_path, 'wb') as f:
             f.write(zip_buffer.getvalue())
         
-        await send_zip_to_bot(bot_token, chat_id, zip_path, "FINAL ZIP ARCHIVE (all tables + numbers.txt)", topic_id)
-        add("[v] ZIP archive sent")
+        await send_zip_to_bot(bot_token, chat_id, zip_path, "ИТОГОВЫЙ ZIP АРХИВ (все таблицы + numbers.txt)", topic_id)
+        add("[v] ZIP архив отправлен")
 
-    # === CREATE TABLE ===
+    # === СОЗДАЁМ ТАБЛИЦУ ===
     result_file = os.path.join(TEMP_DIR, f"result_{int(time.time())}.xlsx")
     wb = Workbook()
     ws = wb.active
-    ws.append(["N tablicy", "FIO", "Data", "Nomer", "SNILS", "Adress"])
+    ws.append(["N таблицы", "ФИО", "Дата", "Номер", "СНИЛС", "Адресс"])
 
     for i, row in enumerate(original_rows):
         ws.append([
@@ -1025,10 +994,10 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             str(row[5] if len(row) > 5 else "").strip()
         ])
     wb.save(result_file)
-    add(f"Table created: {ws.max_row - 1} rows")
+    add(f"Таблица создана: {ws.max_row - 1} строк")
 
-    # === ПАКЕТНАЯ НОРМАЛИЗАЦИЯ ФИО ===
-    add("[DEEPSEEK] Normalizing FIO in batches...")
+    # === НОРМАЛИЗАЦИЯ ФИО ===
+    add("[DEEPSEEK] Нормализация ФИО...")
     fio_rows = []
     fio_values = []
     for row in range(2, ws.max_row + 1):
@@ -1047,13 +1016,13 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             if j < len(batch_rows):
                 ws.cell(row=batch_rows[j], column=COL_FIO).value = norm_val
         
-        add(f"[DEEPSEEK] FIO batch {batch_idx//batch_size + 1}/{(len(fio_values)+batch_size-1)//batch_size}: {len(batch)} names")
+        add(f"[DEEPSEEK] Пакет ФИО {batch_idx//batch_size + 1}/{(len(fio_values)+batch_size-1)//batch_size}: {len(batch)} имен")
         await asyncio.sleep(0.3)
     wb.save(result_file)
-    add("[DEEPSEEK] FIO normalization complete")
+    add("[DEEPSEEK] Нормализация ФИО завершена")
 
-    # === ПАКЕТНАЯ НОРМАЛИЗАЦИЯ АДРЕСОВ ===
-    add("[DEEPSEEK] Normalizing addresses in batches...")
+    # === НОРМАЛИЗАЦИЯ АДРЕСОВ ===
+    add("[DEEPSEEK] Нормализация адресов...")
     addr_rows = []
     addr_values = []
     for row in range(2, ws.max_row + 1):
@@ -1071,12 +1040,12 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             if j < len(batch_rows):
                 ws.cell(row=batch_rows[j], column=COL_ADDR).value = norm_val
         
-        add(f"[DEEPSEEK] Address batch {batch_idx//batch_size + 1}/{(len(addr_values)+batch_size-1)//batch_size}: {len(batch)} addresses")
+        add(f"[DEEPSEEK] Пакет адресов {batch_idx//batch_size + 1}/{(len(addr_values)+batch_size-1)//batch_size}: {len(batch)} адресов")
         await asyncio.sleep(0.3)
     wb.save(result_file)
-    add("[DEEPSEEK] Address normalization complete")
+    add("[DEEPSEEK] Нормализация адресов завершена")
 
-    # === ANALYZE ===
+    # === АНАЛИЗ ===
     real_snils = []
     for row in range(2, ws.max_row + 1):
         existing_date = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
@@ -1085,21 +1054,21 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             real_snils.append(clean_snils(snils_val))
     real_snils = list(set(real_snils))
 
-    add(f"To probe: dates={len(items_no_date)} phones={len(items_no_phone)} snils={len(real_snils)}")
+    add(f"К пробиву: дат={len(items_no_date)} номеров={len(items_no_phone)} снилс={len(real_snils)}")
 
-    # ============ STAGE 1: FIO+PHONE -> BOT1 ============
+    # ============ ЭТАП 1: ФИО+НОМЕР -> БОТ1 ============
     if items_no_date and not stop_requested:
         cid = f"s1_{int(time.time())}"
-        add(f"STAGE 1: FIO+PHONE -> bot1 ({len(items_no_date)} rows)")
+        add(f"ЭТАП 1: ФИО+НОМЕР -> бот1 ({len(items_no_date)} строк)")
 
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 1: FIO+PHONE", len(items_no_date), cid, add, topic_id)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 1: ФИО+НОМЕР", len(items_no_date), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
         if result == "skip":
-            add("[v] STAGE 1 SKIPPED")
+            add("[v] ЭТАП 1 ПРОПУЩЕН")
         elif result == "confirm":
-            add("[v] CONFIRMED! Starting stage 1...")
+            add("[v] ПОДТВЕРЖДЕНО! Начинаю этап 1...")
 
             txt = "\n".join([f"{it.get('fio','')}\t{it.get('phone','')}" for it in items_no_date])
             tpath = os.path.join(TEMP_DIR, f"t1_{int(time.time())}.txt")
@@ -1108,33 +1077,33 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
             await clear_bot(client, bot1)
             e = await client.get_entity(bot1)
-            await client.send_message(e, "Probev")
+            await client.send_message(e, "Пробивы")
             await asyncio.sleep(2)
-            await click_btn(client, bot1, "FIO+phone")
+            await click_btn(client, bot1, "ФИО+номер")
             await asyncio.sleep(2)
             
             last_msgs = await client.get_messages(e, limit=1)
             last_msg_id = last_msgs[0].id if last_msgs else 0
             await client.send_file(e, tpath)
-            add("File sent to bot1, waiting...")
+            add("Файл отправлен в бот1, жду ответ...")
 
             msg = await wait_xlsx(client, bot1, 300, since_msg_id=last_msg_id)
             if msg:
                 rpath = os.path.join(TEMP_DIR, f"r1_{int(time.time())}.xlsx")
                 await client.download_media(msg, file=rpath)
                 recs = parse_xlsx(rpath)
-                add(f"Received responses: {len(recs)}")
+                add(f"Получено ответов: {len(recs)}")
                 fill_dates_from_response(ws, recs)
                 wb.save(result_file)
-                await send_status("stage 1")
+                await send_status("этап 1")
             else:
-                add("[!] Bot1 did not respond")
+                add("[!] Бот1 не ответил на этапе 1")
     
     if stop_requested:
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # === RECALCULATE SNILS ===
+    # === ПЕРЕСЧЁТ СНИЛС ===
     real_snils = []
     for row in range(2, ws.max_row + 1):
         existing_date = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
@@ -1142,21 +1111,21 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         if (not existing_date or existing_date == 'None') and snils_val and len(clean_snils(snils_val)) >= 11:
             real_snils.append(clean_snils(snils_val))
     real_snils = list(set(real_snils))
-    add(f"[RECALC] SNILS with empty date: {len(real_snils)}")
+    add(f"[ПЕРЕСЧЁТ] СНИЛС с пустой датой: {len(real_snils)}")
 
-    # ============ STAGE 2: SNILS -> BOT1 ============
+    # ============ ЭТАП 2: СНИЛС -> БОТ1 ============
     if real_snils and not stop_requested:
         cid = f"s2_{int(time.time())}"
-        add(f"STAGE 2: SNILS -> bot1 ({len(real_snils)} snils)")
+        add(f"ЭТАП 2: СНИЛС -> бот1 ({len(real_snils)} снилс)")
 
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 2: SNILS (bot1)", len(real_snils), cid, add, topic_id)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 2: СНИЛС (бот1)", len(real_snils), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
         if result == "skip":
-            add("[v] STAGE 2 SKIPPED")
+            add("[v] ЭТАП 2 ПРОПУЩЕН")
         elif result == "confirm":
-            add("[v] CONFIRMED! Starting stage 2...")
+            add("[v] ПОДТВЕРЖДЕНО! Начинаю этап 2...")
 
             txt = "\n".join(real_snils)
             tpath = os.path.join(TEMP_DIR, f"t2_{int(time.time())}.txt")
@@ -1165,33 +1134,33 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
             await clear_bot(client, bot1)
             e = await client.get_entity(bot1)
-            await client.send_message(e, "Probev")
+            await client.send_message(e, "Пробивы")
             await asyncio.sleep(4)
-            await click_btn(client, bot1, "SNILS")
+            await click_btn(client, bot1, "СНИЛС")
             await asyncio.sleep(3)
             
             last_msgs = await client.get_messages(e, limit=1)
             last_msg_id = last_msgs[0].id if last_msgs else 0
             await client.send_file(e, tpath)
-            add("SNILS sent to bot1, waiting...")
+            add("СНИЛС отправлены в бот1, жду ответ...")
 
             msg = await wait_xlsx(client, bot1, 300, since_msg_id=last_msg_id)
             if msg:
                 rpath = os.path.join(TEMP_DIR, f"r2_{int(time.time())}.xlsx")
                 await client.download_media(msg, file=rpath)
                 recs = parse_xlsx(rpath)
-                add(f"Received via SNILS: {len(recs)}")
+                add(f"Получено по СНИЛС: {len(recs)}")
                 fill_snils_dates(ws, recs)
                 wb.save(result_file)
-                await send_status("stage 2")
+                await send_status("этап 2")
             else:
-                add("[!] Bot1 did not respond")
+                add("[!] Бот1 не ответил на этапе 2")
     
     if stop_requested:
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ STAGE 3: SNILS -> BOT2 ============
+    # ============ ЭТАП 3: СНИЛС -> БОТ2 ============
     snils_still_empty = []
     for row in range(2, ws.max_row + 1):
         existing_date = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
@@ -1202,16 +1171,16 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
     if snils_still_empty and not stop_requested:
         cid = f"s3_{int(time.time())}"
-        add(f"STAGE 3: SNILS -> bot2 ({len(snils_still_empty)} snils)")
+        add(f"ЭТАП 3: СНИЛС -> бот2 ({len(snils_still_empty)} снилс)")
 
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 3: SNILS (bot2)", len(snils_still_empty), cid, add, topic_id)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 3: СНИЛС (бот2)", len(snils_still_empty), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
         if result == "skip":
-            add("[v] STAGE 3 SKIPPED")
+            add("[v] ЭТАП 3 ПРОПУЩЕН")
         elif result == "confirm":
-            add("[v] CONFIRMED! Starting stage 3...")
+            add("[v] ПОДТВЕРЖДЕНО! Начинаю этап 3...")
 
             txt = "\n".join(snils_still_empty)
             tpath = os.path.join(TEMP_DIR, f"t3_{int(time.time())}.txt")
@@ -1222,40 +1191,40 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             last_msgs = await client.get_messages(e, limit=1)
             last_msg_id = last_msgs[0].id if last_msgs else 0
             await client.send_file(e, tpath)
-            add("SNILS sent to bot2, waiting...")
+            add("СНИЛС отправлены в бот2, жду ответ...")
 
             msg = await wait_xlsx(client, bot2, 300, since_msg_id=last_msg_id)
             if msg:
                 rpath = os.path.join(TEMP_DIR, f"r3_{int(time.time())}.xlsx")
                 await client.download_media(msg, file=rpath)
                 recs = parse_xlsx(rpath)
-                add(f"Received via SNILS bot2: {len(recs)}")
+                add(f"Получено по СНИЛС бот2: {len(recs)}")
                 fill_snils_dates(ws, recs)
                 wb.save(result_file)
-                await send_status("stage 3")
+                await send_status("этап 3")
             else:
-                add("[!] Bot2 did not respond")
+                add("[!] Бот2 не ответил на этапе 3")
     
     if stop_requested:
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ STAGE 4: YEAR FILTER ============
+    # ============ ЭТАП 4: ФИЛЬТР ПО ГОДАМ ============
     if year_range and not stop_requested:
         try:
             parts = year_range.split('-')
             yf, yt = int(parts[0]), int(parts[1])
-            add(f"STAGE 4: Year filter {yf}-{yt}")
+            add(f"ЭТАП 4: Фильтр годов {yf}-{yt}")
 
             cid = f"s4_{int(time.time())}"
-            result = await safe_confirm_with_buttons(bot_token, chat_id, f"STAGE 4: Filter {yf}-{yt}", ws.max_row - 1, cid, add, topic_id)
+            result = await safe_confirm_with_buttons(bot_token, chat_id, f"ЭТАП 4: Фильтр {yf}-{yt}", ws.max_row - 1, cid, add, topic_id)
             if result == "stop":
                 await send_final_zip()
                 return {"ok": True, "log": log, "stopped": True}
             if result == "skip":
-                add("[v] STAGE 4 SKIPPED")
+                add("[v] ЭТАП 4 ПРОПУЩЕН")
             elif result == "confirm":
-                add("[v] CONFIRMED! Filtering...")
+                add("[v] ПОДТВЕРЖДЕНО! Фильтрую...")
                 
                 rows_to_delete = []
                 for row in range(2, ws.max_row + 1):
@@ -1274,16 +1243,16 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                 for row in reversed(rows_to_delete):
                     ws.delete_rows(row)
                 wb.save(result_file)
-                await send_status(f"stage 4 (filter {yf}-{yt})")
-                add(f"Deleted: {len(rows_to_delete)}, remaining: {ws.max_row - 1}")
+                await send_status(f"этап 4 (фильтр {yf}-{yt})")
+                add(f"Удалено: {len(rows_to_delete)}, осталось: {ws.max_row - 1}")
         except Exception as e:
-            add(f"Filter error: {e}")
+            add(f"Ошибка фильтра: {e}")
     
     if stop_requested:
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ STAGE 5: FIO+DATE -> BOT1 ============
+    # ============ ЭТАП 5: ФИО+ДАТА -> БОТ1 ============
     items_no_phone_after_stage4 = []
     for row in range(2, ws.max_row + 1):
         fio_val = str(ws.cell(row=row, column=COL_FIO).value or "").strip()
@@ -1299,16 +1268,16 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
     if items_no_phone_after_stage4 and not stop_requested:
         cid = f"s5_{int(time.time())}"
-        add(f"STAGE 5: FIO+DATE -> bot1 ({len(items_no_phone_after_stage4)} rows)")
+        add(f"ЭТАП 5: ФИО+ДАТА -> бот1 ({len(items_no_phone_after_stage4)} строк)")
 
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 5: FIO+DATE (bot1)", len(items_no_phone_after_stage4), cid, add, topic_id)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 5: ФИО+ДАТА (бот1)", len(items_no_phone_after_stage4), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
         if result == "skip":
-            add("[v] STAGE 5 SKIPPED")
+            add("[v] ЭТАП 5 ПРОПУЩЕН")
         elif result == "confirm":
-            add("[v] CONFIRMED! Starting stage 5...")
+            add("[v] ПОДТВЕРЖДЕНО! Начинаю этап 5...")
 
             txt = "\n".join([f"{it.get('fio','')}\t{it.get('date','')}" for it in items_no_phone_after_stage4])
             tpath = os.path.join(TEMP_DIR, f"t5_{int(time.time())}.txt")
@@ -1317,33 +1286,33 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
             await clear_bot(client, bot1)
             e = await client.get_entity(bot1)
-            await client.send_message(e, "Probev")
+            await client.send_message(e, "Пробивы")
             await asyncio.sleep(2)
-            await click_btn(client, bot1, "FIO+date")
+            await click_btn(client, bot1, "ФИО+дата")
             await asyncio.sleep(2)
             
             last_msgs = await client.get_messages(e, limit=1)
             last_msg_id = last_msgs[0].id if last_msgs else 0
             await client.send_file(e, tpath)
-            add("File sent to bot1, waiting...")
+            add("Файл отправлен в бот1, жду ответ...")
 
             msg = await wait_xlsx(client, bot1, 300, since_msg_id=last_msg_id)
             if msg:
                 rpath = os.path.join(TEMP_DIR, f"r5_{int(time.time())}.xlsx")
                 await client.download_media(msg, file=rpath)
                 recs = parse_xlsx(rpath)
-                add(f"Received responses: {len(recs)}")
+                add(f"Получено ответов: {len(recs)}")
                 fill_phones_from_response(ws, recs)
                 wb.save(result_file)
-                await send_status("stage 5")
+                await send_status("этап 5")
             else:
-                add("[!] Bot1 did not respond")
+                add("[!] Бот1 не ответил на этапе 5")
     
     if stop_requested:
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ STAGE 6: FIO+DATE -> BOT2 ============
+    # ============ ЭТАП 6: ФИО+ДАТА -> БОТ2 ============
     items_no_phone_after_stage5 = []
     for row in range(2, ws.max_row + 1):
         fio_val = str(ws.cell(row=row, column=COL_FIO).value or "").strip()
@@ -1359,16 +1328,16 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
     if items_no_phone_after_stage5 and not stop_requested:
         cid = f"s6_{int(time.time())}"
-        add(f"STAGE 6: FIO+DATE -> bot2 ({len(items_no_phone_after_stage5)} rows)")
+        add(f"ЭТАП 6: ФИО+ДАТА -> бот2 ({len(items_no_phone_after_stage5)} строк)")
 
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 6: FIO+DATE (bot2)", len(items_no_phone_after_stage5), cid, add, topic_id)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 6: ФИО+ДАТА (бот2)", len(items_no_phone_after_stage5), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
         if result == "skip":
-            add("[v] STAGE 6 SKIPPED")
+            add("[v] ЭТАП 6 ПРОПУЩЕН")
         elif result == "confirm":
-            add("[v] CONFIRMED! Starting stage 6...")
+            add("[v] ПОДТВЕРЖДЕНО! Начинаю этап 6...")
 
             txt = "\n".join([f"{it.get('fio','')}\t{it.get('date','')}" for it in items_no_phone_after_stage5])
             tpath = os.path.join(TEMP_DIR, f"t6_{int(time.time())}.txt")
@@ -1379,25 +1348,25 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             last_msgs = await client.get_messages(e, limit=1)
             last_msg_id = last_msgs[0].id if last_msgs else 0
             await client.send_file(e, tpath)
-            add("File sent to bot2, waiting...")
+            add("Файл отправлен в бот2, жду ответ...")
 
             msg = await wait_xlsx(client, bot2, 300, since_msg_id=last_msg_id)
             if msg:
                 rpath = os.path.join(TEMP_DIR, f"r6_{int(time.time())}.xlsx")
                 await client.download_media(msg, file=rpath)
                 recs = parse_xlsx(rpath)
-                add(f"Received responses from bot2: {len(recs)}")
+                add(f"Получено от бот2: {len(recs)}")
                 fill_phones_from_response(ws, recs)
                 wb.save(result_file)
-                await send_status("stage 6")
+                await send_status("этап 6")
             else:
-                add("[!] Bot2 did not respond")
+                add("[!] Бот2 не ответил на этапе 6")
     
     if stop_requested:
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ STAGE 7: DOBIV -> BOT2 (SAURON) ============
+    # ============ ЭТАП 7: ДОБИВ -> БОТ2 ============
     items_no_phone_final = []
     for row in range(2, ws.max_row + 1):
         fio_val = str(ws.cell(row=row, column=COL_FIO).value or "").strip()
@@ -1413,16 +1382,16 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
     if items_no_phone_final and not stop_requested:
         cid = f"s7_{int(time.time())}"
-        add(f"STAGE 7: DOBIV -> bot2 ({len(items_no_phone_final)} rows)")
+        add(f"ЭТАП 7: ДОБИВ -> бот2 ({len(items_no_phone_final)} строк)")
 
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "STAGE 7: DOBIV (bot2)", len(items_no_phone_final), cid, add, topic_id)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 7: ДОБИВ (бот2)", len(items_no_phone_final), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
         if result == "skip":
-            add("[v] STAGE 7 SKIPPED")
+            add("[v] ЭТАП 7 ПРОПУЩЕН")
         elif result == "confirm":
-            add("[v] CONFIRMED! Dobiv via sauron...")
+            add("[v] ПОДТВЕРЖДЕНО! Добиваю через саурон...")
 
             e = await client.get_entity(bot2)
             for i, it in enumerate(items_no_phone_final):
@@ -1444,25 +1413,25 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                             if table_fio == normalize_fio_local(fio) and table_date == date:
                                 if not existing_phone or existing_phone == 'None':
                                     ws.cell(row=row, column=COL_PHONE).value = phones[0]
-                                    add(f"[DOBIV] {fio} -> {phones[0]}")
+                                    add(f"[ДОБИВ] {fio} -> {phones[0]}")
                                 break
 
                     if (i + 1) % 5 == 0:
                         wb.save(result_file)
-                        add(f"[DOBIV] Saved after {i+1} rows")
+                        add(f"[ДОБИВ] Сохранено после {i+1} строк")
                         await asyncio.sleep(2)
 
                 except FloodWaitError as e:
-                    add(f"[DOBIV] FloodWait: {e.seconds}s")
+                    add(f"[ДОБИВ] FloodWait: {e.seconds}с")
                     await asyncio.sleep(e.seconds)
                 except Exception as e:
-                    add(f"[DOBIV] Error: {e}")
+                    add(f"[ДОБИВ] Ошибка: {e}")
 
             wb.save(result_file)
-            await send_status("stage 7 (dobiv)")
-            add("Dobiv completed")
+            await send_status("этап 7 (добив)")
+            add("Добив завершён")
 
-    # === DELETE ROWS WITHOUT DATE ===
+    # === УДАЛЯЕМ СТРОКИ БЕЗ ДАТЫ ===
     rows_no_date = []
     for row in range(2, ws.max_row + 1):
         date_val = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
@@ -1470,14 +1439,14 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             rows_no_date.append(row)
     
     if rows_no_date:
-        add(f"[CLEANUP] Deleting {len(rows_no_date)} rows without date")
+        add(f"[ОЧИСТКА] Удаляю {len(rows_no_date)} строк без даты")
         for row in reversed(rows_no_date):
             ws.delete_rows(row)
         wb.save(result_file)
-        add(f"Remaining: {ws.max_row - 1} rows")
+        add(f"Осталось: {ws.max_row - 1} строк")
 
-    # === FINAL ===
-    add("=== ALL STAGES COMPLETED ===")
+    # === ФИНАЛ ===
+    add("=== ВСЕ ЭТАПЫ ЗАВЕРШЕНЫ ===")
     
     await send_final_zip()
     
@@ -1488,14 +1457,14 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             total_dates += 1
         if str(ws.cell(row=row, column=COL_PHONE).value or "").strip():
             total_phones += 1
-    add(f"Total: rows={ws.max_row-1}, with dates={total_dates}, with phones={total_phones}")
+    add(f"Итого: строк={ws.max_row-1}, с датами={total_dates}, с номерами={total_phones}")
 
     return {"ok": True, "log": log, "stopped": stop_requested}
 
 
-# ====================== ENDPOINTS ======================
+# ====================== ЭНДПОИНТЫ ======================
 async def handle_health(request):
-    return web.json_response({"ok": True, "message": "X Backend v14.0"})
+    return web.json_response({"ok": True, "message": "X Backend v14.1"})
 
 
 async def handle_root(request):
@@ -1505,7 +1474,7 @@ async def handle_root(request):
             html = f.read()
         return web.Response(text=html, content_type="text/html")
     except Exception as e:
-        print(f"[ROOT] Error: {e}")
+        print(f"[ROOT] Ошибка: {e}")
         return web.Response(text="OK", content_type="text/plain")
 
 
@@ -1514,7 +1483,7 @@ async def handle_upload_zip(request):
         reader = await request.multipart()
         field = await reader.next()
         if field.name != 'file':
-            return web.json_response({"ok": False, "error": "No file"}, status=400)
+            return web.json_response({"ok": False, "error": "Нет файла"}, status=400)
         
         data = await field.read()
         zip_path = os.path.join(TEMP_DIR, f"upload_{int(time.time())}.zip")
@@ -1543,7 +1512,7 @@ async def handle_upload_zip(request):
         
         merged = merge_tables(tables_data)
         if not merged:
-            return web.json_response({"ok": False, "error": "No tables found"}, status=400)
+            return web.json_response({"ok": False, "error": "Таблицы не найдены"}, status=400)
         
         merged_path = os.path.join(TEMP_DIR, f"merged_{int(time.time())}.xlsx")
         wb = Workbook()
@@ -1553,7 +1522,7 @@ async def handle_upload_zip(request):
             ws.append(row)
         wb.save(merged_path)
         
-        names = [t.get('name', f'Table_{i+1}') for i, t in enumerate(tables_data)]
+        names = [t.get('name', f'Таблица_{i+1}') for i, t in enumerate(tables_data)]
         
         return web.json_response({
             "ok": True,
@@ -1565,7 +1534,7 @@ async def handle_upload_zip(request):
             "names": names
         })
     except Exception as e:
-        print(f"[UPLOAD] Error: {e}")
+        print(f"[UPLOAD] Ошибка: {e}")
         traceback.print_exc()
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
@@ -1575,16 +1544,16 @@ async def handle_send_code(request):
         d = await request.json()
         phone = d.get("phone", "").strip()
         if not phone:
-            return web.json_response({"ok": False, "error": "Enter phone"}, status=400)
+            return web.json_response({"ok": False, "error": "Введите номер"}, status=400)
 
         c = TelegramClient(StringSession(), API_ID, API_HASH)
         await c.connect()
         r = await c.send_code_request(phone)
         sessions[phone] = {"client": c, "hash": r.phone_code_hash}
-        print(f"[AUTH] Code sent to {phone}")
+        print(f"[AUTH] Код отправлен на {phone}")
         return web.json_response({"ok": True})
     except Exception as e:
-        print(f"[AUTH] Error: {e}")
+        print(f"[AUTH] Ошибка: {e}")
         return web.json_response({"ok": False, "error": str(e)}, status=400)
 
 
@@ -1596,7 +1565,7 @@ async def handle_verify_code(request):
         password = d.get("password", "").strip()
 
         if phone not in sessions:
-            return web.json_response({"ok": False, "error": "Send code first"}, status=400)
+            return web.json_response({"ok": False, "error": "Сначала отправьте код"}, status=400)
 
         s = sessions[phone]
         c = s["client"]
@@ -1612,7 +1581,7 @@ async def handle_verify_code(request):
         me = await c.get_me()
         del sessions[phone]
         user_clients[ss] = c
-        print(f"[AUTH] Login: {me.first_name}")
+        print(f"[AUTH] Вход: {me.first_name}")
         return web.json_response({
             "ok": True,
             "session": ss,
@@ -1620,7 +1589,7 @@ async def handle_verify_code(request):
             "name": me.first_name or ""
         })
     except Exception as e:
-        print(f"[AUTH] Error: {e}")
+        print(f"[AUTH] Ошибка: {e}")
         return web.json_response({"ok": False, "error": str(e)}, status=400)
 
 
@@ -1633,7 +1602,7 @@ async def handle_full_probev(request):
         bot_token = d.get("bot_token", "")
         chat_id = d.get("chat_id", "")
         topic_id = d.get("topic_id", None)
-        group_id = d.get("group_id", None)  # ID группы для поиска ИНН
+        group_id = d.get("group_id", None)
         year_range = d.get("year_range", "") or "1945-1975"
         items_no_date = d.get("items_no_date", [])
         items_no_phone = d.get("items_no_phone", [])
@@ -1642,23 +1611,23 @@ async def handle_full_probev(request):
         tables_names = d.get("tables_names", [])
 
         if not ss:
-            return web.json_response({"ok": False, "error": "No session"}, status=400)
+            return web.json_response({"ok": False, "error": "Нет сессии"}, status=400)
 
         async with probev_lock:
             if ss in active_probevs:
                 task = active_probevs[ss]
                 if not task.done():
-                    return web.json_response({"ok": False, "error": "Probev already running"}, status=409)
+                    return web.json_response({"ok": False, "error": "Пробив уже выполняется"}, status=409)
                 else:
                     del active_probevs[ss]
 
         print(f"\n{'='*60}")
-        print(f"[PROBEV] START FULL CYCLE (7 STAGES + DeepSeek + RENAME)")
-        print(f"[PROBEV] Bot1: {bot1}, Bot2: {bot2}")
-        print(f"[PROBEV] Rows without date: {len(items_no_date)}")
-        print(f"[PROBEV] Rows without phone: {len(items_no_phone)}")
-        print(f"[PROBEV] Group ID: {group_id or 'None'}")
-        print(f"[PROBEV] Topic ID: {topic_id or 'None'}")
+        print(f"[PROBEV] ЗАПУСК ПОЛНОГО ЦИКЛА (7 ЭТАПОВ + DeepSeek)")
+        print(f"[PROBEV] Бот1: {bot1}, Бот2: {bot2}")
+        print(f"[PROBEV] Строк без даты: {len(items_no_date)}")
+        print(f"[PROBEV] Строк без номера: {len(items_no_phone)}")
+        print(f"[PROBEV] Группа: {group_id or 'Нет'}")
+        print(f"[PROBEV] Тема: {topic_id or 'Нет'}")
         print(f"{'='*60}\n")
 
         async def run_and_cleanup():
@@ -1673,7 +1642,7 @@ async def handle_full_probev(request):
                 async with probev_lock:
                     if ss in active_probevs:
                         del active_probevs[ss]
-                print(f"[PROBEV] Cleanup completed for session {ss[:10]}...")
+                print(f"[PROBEV] Очистка завершена для сессии {ss[:10]}...")
 
         task = asyncio.create_task(run_and_cleanup())
         async with probev_lock:
@@ -1693,10 +1662,10 @@ async def handle_full_probev(request):
 async def handle_stop(request):
     global stop_requested
     stop_requested = True
-    return web.json_response({"ok": True, "message": "Stop requested"})
+    return web.json_response({"ok": True, "message": "Остановка запрошена"})
 
 
-# ====================== STARTUP ======================
+# ====================== ЗАПУСК ======================
 app = web.Application(middlewares=[log_and_cors], client_max_size=200 * 1024 * 1024)
 app.router.add_get("/", handle_root)
 app.router.add_get("/health", handle_health)
@@ -1711,7 +1680,7 @@ async def on_startup(app):
     port = app["port"]
     msg = (
         "=" * 60 + "\n"
-        f"X Backend v14.0 STARTED (DeepSeek BATCH + ПЕРЕИМЕНОВАНИЕ ПО АДРЕСУ)\n"
+        f"X Backend v14.1 ЗАПУЩЕН (Русский интерфейс)\n"
         f"Host: 0.0.0.0  |  Port: {port}\n"
         + "=" * 60
     )
@@ -1719,7 +1688,7 @@ async def on_startup(app):
 
 
 async def on_shutdown(app):
-    print("[SHUTDOWN] Closing connections...", flush=True)
+    print("[SHUTDOWN] Закрываю соединения...", flush=True)
     for ss, client in list(user_clients.items()):
         try:
             if client.is_connected():
@@ -1729,7 +1698,7 @@ async def on_shutdown(app):
     user_clients.clear()
     sessions.clear()
     pending_confirms.clear()
-    print("[SHUTDOWN] Done.", flush=True)
+    print("[SHUTDOWN] Готово.", flush=True)
 
 
 if __name__ == "__main__":
@@ -1760,10 +1729,10 @@ if __name__ == "__main__":
         site = web.SockSite(runner, sock)
         loop.run_until_complete(site.start())
 
-        print(f"[START] SERVER READY — port {port}", flush=True)
+        print(f"[START] СЕРВЕР ГОТОВ — порт {port}", flush=True)
 
         def shutdown():
-            print("[SIGNAL] Shutting down...", flush=True)
+            print("[SIGNAL] Останавливаю...", flush=True)
             loop.create_task(_do_shutdown(runner, sock, loop))
 
         async def _do_shutdown(runner, sock, loop):
