@@ -49,6 +49,10 @@ def normalize_fio(raw):
     if not raw:
         return ""
     words = [re.sub(r'[^A-Za-zА-ЯЁа-яё\-]', '', w) for w in str(raw).strip().split() if w]
+    # Фильтруем пустые строки (могут появиться после очистки от цифр/спецсимволов)
+    words = [w for w in words if w]
+    if not words:
+        return ""
     return ' '.join([w[0].upper() + w[1:].lower() for w in words]).upper().replace('Ё', 'Е')
 
 
