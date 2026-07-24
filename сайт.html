@@ -107,6 +107,7 @@
         <button class="nav-btn" data-page="dobiv">Добив</button>
         <button class="nav-btn" data-page="server">Сервер</button>
         <button class="nav-btn" data-page="merge">Объединить</button>
+        <button class="nav-btn" data-page="addrs">Адреса</button>
     </div>
 
     <!-- MAIN CONTENT -->
@@ -323,6 +324,33 @@
                     <button class="btn-green" id="mergeDownloadBtn" style="display:none">Скачать объединённый</button>
                     <button class="btn-red" id="mergeClearBtn">Очистить</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- ========== НОРМАЛИЗАЦИЯ АДРЕСОВ ========== -->
+        <div class="page" id="page-addrs">
+            <div class="title">Адреса</div>
+            <div class="subtitle">Нормализация адресов через DeepSeek: убрать «область», «город», «улица», привести к формату Город, Улица, Дом, Квартира</div>
+            <div class="card">
+                <h3>1. Загрузите таблицу (XLSX)</h3>
+                <button class="btn-dark mb-8" onclick="document.getElementById('addrXlsx').click()">Выбрать XLSX</button>
+                <input type="file" id="addrXlsx" accept=".xlsx,.xls" style="display:none" onchange="loadAddrXlsx(event)">
+                <div id="addrXlsxInfo" class="text-sm"></div>
+            </div>
+            <div class="card">
+                <h3>2. Превью адресов</h3>
+                <div class="table-preview" id="addrPreview" style="max-height:200px;overflow:auto;"></div>
+                <div id="addrStats" class="text-sm mt-8"></div>
+            </div>
+            <div class="card">
+                <h3>3. Нормализация</h3>
+                <div class="flex mb-8">
+                    <button class="btn-white" id="btnNormAddr" onclick="normalizeAddresses()">Нормализовать (DeepSeek)</button>
+                    <button class="btn-dark btn-sm" onclick="normalizeAddressesLocal()">Локально (быстро)</button>
+                    <button class="btn-green btn-sm" id="btnAddrDownload" style="display:none" onclick="downloadAddrResult()">Скачать XLSX</button>
+                </div>
+                <div class="text-xs" style="color:#666;">DeepSeek — точнее. Локально — мгновенно, без API.</div>
+                <div id="addrNormLog" class="log-box mt-8" style="max-height:150px;"><span class="dim">Ожидание...</span></div>
             </div>
         </div>
 
@@ -1402,6 +1430,221 @@ document.getElementById('mergeClearBtn').addEventListener('click', function() {
     document.getElementById('mergeFileList').textContent = '';
     document.getElementById('mergeDownloadBtn').style.display = 'none';
 });
+
+// ==================== НОРМАЛИЗАЦИЯ АДРЕСОВ ====================
+var _addrData = null;
+var _addrResult = null;
+
+function loadAddrXlsx(e) {
+    var f = e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+        var wb = XLSX.read(ev.target.result, {type: 'array'});
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        _addrData = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
+        
+        // Находим колонку с адресом
+        var headers = _addrData[0] || [];
+        var addrIdx = -1;
+        for (var i = 0; i < headers.length; i++) {
+            var h = (''+headers[i]).toLowerCase();
+            if (h.includes('адрес') || h.includes('адресс') || h.includes('address') || h.includes('addr')) {
+                addrIdx = i; break;
+            }
+        }
+        if (addrIdx === -1) addrIdx = 5; // По умолчанию
+        
+        document.getElementById('addrXlsxInfo').textContent = 'Загружено: ' + f.name + ' (' + (_addrData.length-1) + ' строк, колонка адреса: ' + (addrIdx+1) + ')';
+        
+        // Превью адресов
+        var addrs = [];
+        for (var r = 1; r < Math.min(_addrData.length, 30); r++) {
+            var row = _addrData[r];
+            if (row && row[addrIdx]) addrs.push(String(row[addrIdx]).trim());
+        }
+        
+        var unique = [];
+        var seen = {};
+        for (var a = 0; a < addrs.length; a++) {
+            var key = addrs[a].toLowerCase().replace(/\s+/g,' ').trim();
+            if (!seen[key]) { seen[key] = true; unique.push(addrs[a]); }
+        }
+        
+        document.getElementById('addrPreview').innerHTML = unique.map(function(a) {
+            return '<div style="padding:3px 0;font-size:11px;border-bottom:1px solid #0f0f0f;">' + esc(a) + '</div>';
+        }).join('');
+        document.getElementById('addrStats').textContent = 'Показано ' + unique.length + ' уникальных адресов (из первых 30 строк)';
+        document.getElementById('addrNormLog').innerHTML = '<span class="dim">Готово к нормализации. Всего строк: ' + (_addrData.length-1) + '</span>';
+        document.getElementById('btnNormAddr').disabled = false;
+    };
+    reader.readAsArrayBuffer(f);
+}
+
+async function normalizeAddresses() {
+    if (!_addrData || !_addrData.length) return toast('Сначала загрузите таблицу', false);
+    
+    var btn = document.getElementById('btnNormAddr');
+    btn.disabled = true;
+    btn.textContent = 'DeepSeek...';
+    
+    var logEl = document.getElementById('addrNormLog');
+    logEl.innerHTML = '<span class="info">Отправляю адреса в DeepSeek...</span>';
+    
+    // Находим колонку адреса
+    var headers = _addrData[0] || [];
+    var addrIdx = -1;
+    for (var i = 0; i < headers.length; i++) {
+        var h = (''+headers[i]).toLowerCase();
+        if (h.includes('адрес') || h.includes('адресс') || h.includes('address') || h.includes('addr')) {
+            addrIdx = i; break;
+        }
+    }
+    if (addrIdx === -1) addrIdx = 5;
+    
+    // Собираем адреса
+    var addrValues = [];
+    var addrRows = [];
+    for (var r = 1; r < _addrData.length; r++) {
+        var row = _addrData[r];
+        if (row && row[addrIdx] && String(row[addrIdx]).trim().length > 3) {
+            addrValues.push(String(row[addrIdx]).trim());
+            addrRows.push(r);
+        }
+    }
+    
+    try {
+        var srv = getServerUrl();
+        if (!srv) throw new Error('Сервер не настроен');
+        
+        // Отправляем пакетами по 200
+        var BATCH = 200;
+        var totalBatches = Math.ceil(addrValues.length / BATCH);
+        var allResults = [];
+        
+        for (var b = 0; b < totalBatches; b++) {
+            var batch = addrValues.slice(b * BATCH, (b + 1) * BATCH);
+            
+            var resp = await fetch(srv + '/normalize-addresses', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({addresses: batch})
+            });
+            var data = await resp.json();
+            
+            if (data.ok && data.normalized) {
+                allResults = allResults.concat(data.normalized);
+            } else {
+                // Локальный fallback
+                allResults = allResults.concat(batch.map(normalizeAddrLocal));
+            }
+            
+            logEl.innerHTML += '<div class="dim">Пакет ' + (b+1) + '/' + totalBatches + ' (' + batch.length + ' адресов)</div>';
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+        
+        // Записываем результат
+        var result = JSON.parse(JSON.stringify(_addrData));
+        for (var j = 0; j < allResults.length; j++) {
+            if (j < addrRows.length) {
+                result[addrRows[j]][addrIdx] = allResults[j];
+            }
+        }
+        
+        _addrResult = result;
+        document.getElementById('btnAddrDownload').style.display = 'inline-block';
+        logEl.innerHTML += '<div class="ok">Готово! Нормализовано ' + allResults.length + ' адресов.</div>';
+        logEl.scrollTop = logEl.scrollHeight;
+        toast('Нормализовано ' + allResults.length + ' адресов!', true);
+        
+        // Обновляем превью
+        var previewAddrs = [];
+        for (var p = 0; p < Math.min(allResults.length, 20); p++) {
+            previewAddrs.push(allResults[p]);
+        }
+        document.getElementById('addrPreview').innerHTML = previewAddrs.map(function(a) {
+            return '<div style="padding:3px 0;font-size:11px;border-bottom:1px solid #0f0f0f;">' + esc(a) + '</div>';
+        }).join('') + (allResults.length > 20 ? '<div style="color:#888;font-size:10px;">... ещё ' + (allResults.length-20) + '</div>' : '');
+        
+    } catch(e) {
+        logEl.innerHTML += '<div class="err">Ошибка DeepSeek: ' + e.message + '. Пробую локально...</div>';
+        normalizeAddressesLocal();
+    }
+    
+    btn.disabled = false;
+    btn.textContent = 'Нормализовать (DeepSeek)';
+}
+
+function normalizeAddrLocal(addr) {
+    if (!addr) return '';
+    var s = String(addr).toLowerCase().trim();
+    // Убираем префиксы
+    s = s.replace(/\b(область|обл\.?|край|республика|ао|район|р-н)\b\.?\s*/gi, '');
+    s = s.replace(/\b(г\.?|город|гор\.?)\b\.?\s*/gi, '');
+    s = s.replace(/\b(ул\.?|улица|пр-т|проспект|пер\.?|переулок|пр\.?|проезд|б-р|бульвар|пл\.?|площадь|наб\.?|набережная|ш\.?|шоссе)\b\.?\s*/gi, '');
+    s = s.replace(/\b(д\.?|дом|влд\.?|владение)\b\.?\s*/gi, '');
+    s = s.replace(/\b(кв\.?|квартира|кв-ра)\b\.?\s*/gi, '');
+    s = s.replace(/\b(корп\.?|корпус|стр\.?|строение)\b\.?\s*/gi, '');
+    s = s.replace(/\s+/g, ' ').trim();
+    s = s.replace(/\s*,\s*/g, ', ');
+    // Каждое слово с прописной
+    var parts = s.split(',');
+    return parts.map(function(p) {
+        p = p.trim();
+        if (!p) return '';
+        return p.split(' ').map(function(w) {
+            return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+        }).join(' ');
+    }).join(', ');
+}
+
+function normalizeAddressesLocal() {
+    if (!_addrData || !_addrData.length) return toast('Сначала загрузите таблицу', false);
+    
+    var headers = _addrData[0] || [];
+    var addrIdx = -1;
+    for (var i = 0; i < headers.length; i++) {
+        var h = (''+headers[i]).toLowerCase();
+        if (h.includes('адрес') || h.includes('адресс') || h.includes('address') || h.includes('addr')) {
+            addrIdx = i; break;
+        }
+    }
+    if (addrIdx === -1) addrIdx = 5;
+    
+    var result = JSON.parse(JSON.stringify(_addrData));
+    var count = 0;
+    for (var r = 1; r < result.length; r++) {
+        if (result[r] && result[r][addrIdx]) {
+            var old = result[r][addrIdx];
+            result[r][addrIdx] = normalizeAddrLocal(result[r][addrIdx]);
+            if (old !== result[r][addrIdx]) count++;
+        }
+    }
+    
+    _addrResult = result;
+    document.getElementById('btnAddrDownload').style.display = 'inline-block';
+    document.getElementById('addrNormLog').innerHTML = '<div class="ok">Локальная нормализация завершена! Изменено ' + count + ' адресов.</div>';
+    
+    // Превью
+    var preview = [];
+    for (var r = 1; r < Math.min(result.length, 21); r++) {
+        if (result[r] && result[r][addrIdx]) preview.push(result[r][addrIdx]);
+    }
+    document.getElementById('addrPreview').innerHTML = preview.map(function(a) {
+        return '<div style="padding:3px 0;font-size:11px;border-bottom:1px solid #0f0f0f;">' + esc(a) + '</div>';
+    }).join('');
+    
+    toast('Локально нормализовано: ' + count + ' адресов', true);
+}
+
+function downloadAddrResult() {
+    if (!_addrResult) return toast('Нет данных', false);
+    var ws = XLSX.utils.aoa_to_sheet(_addrResult);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Addresses');
+    XLSX.writeFile(wb, 'addresses_normalized.xlsx');
+    toast('Скачано!', true);
+}
 
 // ==================== ИНИЦИАЛИЗАЦИЯ ====================
 (function init() {

@@ -142,9 +142,9 @@ async def normalize_batch_deepseek(items, prompt_type='fio', retry_count=0):
                     {"role": "user", "content": f"Нормализуй:\n{items_text}"}
                 ],
                 "temperature": 0.1,
-                "max_tokens": 800
+                "max_tokens": max(800, len(items) * 35)
             }
-            async with session.post(url, headers=headers, json=payload, timeout=15) as resp:
+            async with session.post(url, headers=headers, json=payload, timeout=max(15, len(items) // 5)) as resp:
                 data = await resp.json()
                 if data.get("choices"):
                     text = data["choices"][0]["message"]["content"].strip()
@@ -328,9 +328,9 @@ async def find_apartments_via_deepseek(addresses_without_apt, addresses_with_apt
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.1,
-                "max_tokens": 2000
+                "max_tokens": max(2000, len(addresses_without_apt) * 40)
             }
-            async with session.post(url, headers=headers, json=payload, timeout=30) as resp:
+            async with session.post(url, headers=headers, json=payload, timeout=max(30, len(addresses_without_apt) // 3)) as resp:
                 data = await resp.json()
                 if data.get("choices"):
                     text = data["choices"][0]["message"]["content"].strip()
@@ -2470,6 +2470,36 @@ async def handle_finish_session(request):
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
+async def handle_normalize_addresses(request):
+    """Нормализация адресов через DeepSeek (для вкладки «Адреса»)"""
+    try:
+        d = await request.json()
+        addresses = d.get("addresses", [])
+        
+        if not addresses:
+            return web.json_response({"ok": False, "error": "Нет адресов"}, status=400)
+        
+        # Используем общую функцию нормализации
+        normalized = await normalize_batch_deepseek(addresses, 'address')
+        
+        return web.json_response({
+            "ok": True,
+            "normalized": normalized,
+            "count": len(normalized)
+        })
+    except Exception as e:
+        print(f"[NORM-ADDR] Ошибка: {e}")
+        traceback.print_exc()
+        # Fallback: локальная нормализация
+        normalized = [normalize_address_local(a) for a in addresses]
+        return web.json_response({
+            "ok": True,
+            "normalized": normalized,
+            "count": len(normalized),
+            "fallback": True
+        })
+
+
 # ====================== ЗАПУСК ======================
 app = web.Application(middlewares=[log_and_cors], client_max_size=200 * 1024 * 1024)
 app.router.add_get("/", handle_root)
@@ -2481,6 +2511,7 @@ app.router.add_post("/verify-code", handle_verify_code)
 app.router.add_post("/full-probev", handle_full_probev)
 app.router.add_post("/stop", handle_stop)
 app.router.add_post("/finish-session", handle_finish_session)
+app.router.add_post("/normalize-addresses", handle_normalize_addresses)
 
 
 async def on_startup(app):
