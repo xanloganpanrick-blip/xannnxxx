@@ -200,6 +200,26 @@ async def poll_updates(bot_token, chat_id, confirm_id):
     print(f"[POLL] ТАЙМАУТ: {confirm_id}")
 
 
+async def safe_confirm(bot_token, chat_id, stage_name, count, confirm_id, add_log):
+    """Безопасное подтверждение: если бот недоступен — авто-продолжаем, не виснем."""
+    if not bot_token or not chat_id:
+        add_log("[v] Бот не настроен — авто-продолжаю")
+        return True
+
+    sent = await send_confirm(bot_token, chat_id, stage_name, count, confirm_id)
+    if not sent:
+        add_log("[!] Не удалось отправить запрос в бот — авто-продолжаю")
+        return True
+
+    add_log(f"[ОЖИДАНИЕ] Откройте бот и нажмите «Подтвердить» для: {stage_name}")
+    ok = await wait_confirm(confirm_id, timeout=600)
+    if ok is None or ok is False:
+        add_log(f"[x] {stage_name} — отменён или таймаут")
+        return False
+    add_log(f"[v] ПОДТВЕРЖДЕНО: {stage_name}")
+    return True
+
+
 async def wait_confirm(confirm_id, timeout=600):
     """Ожидает результат подтверждения"""
     start = time.time()
@@ -242,23 +262,22 @@ async def click_btn(client, bot, text):
     return False
 
 
-async def wait_xlsx(client, bot, timeout=180, since=None):
-    """Ждет XLSX-файл от бота. since — timestamp, после которого искать (чтобы не взять старый ответ)."""
+async def wait_xlsx(client, bot, timeout=180, since_msg_id=None):
+    """Ждет XLSX-файл от бота. since_msg_id — искать только сообщения с ID > этого."""
     e = await client.get_entity(bot)
     start = time.time()
-    if since is None:
-        since = start  # по умолчанию — только новые сообщения
-    print(f"[BOT] Ожидаю XLSX от {bot} (таймаут {timeout}с, since={datetime.fromtimestamp(since).strftime('%H:%M:%S')})...")
+    print(f"[BOT] Ожидаю XLSX от {bot} (таймаут {timeout}с, since_msg_id={since_msg_id})...")
     while time.time() - start < timeout:
-        async for msg in client.iter_messages(e, limit=10):
-            # Только сообщения НОВЕЕ since
-            if msg.date.timestamp() < since:
+        msgs = await client.get_messages(e, limit=5)
+        for msg in msgs:
+            if not msg or not msg.document:
                 continue
-            if msg.document:
-                for a in msg.document.attributes:
-                    if isinstance(a, DocumentAttributeFilename) and a.file_name.endswith('.xlsx'):
-                        print(f"[BOT] Получен XLSX: {a.file_name}")
-                        return msg
+            if since_msg_id is not None and msg.id <= since_msg_id:
+                continue  # старое сообщение — пропускаем
+            for a in msg.document.attributes:
+                if isinstance(a, DocumentAttributeFilename) and a.file_name.endswith('.xlsx'):
+                    print(f"[BOT] Получен XLSX: {a.file_name} (msg_id={msg.id})")
+                    return msg
         await asyncio.sleep(3)
     print(f"[BOT] XLSX не получен от {bot} за {timeout}с")
     return None
@@ -563,8 +582,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         add(f"ЭТАП 1: ФИО+НОМЕР -> бот1 ({len(items_no_date)} строк)")
 
         if bot_token and chat_id:
-            await send_confirm(bot_token, chat_id, "ЭТАП 1: ФИО+НОМЕР (пустые даты)", len(items_no_date), cid)
-            ok = await wait_confirm(cid)
+            ok = await safe_confirm(bot_token, chat_id, "ЭТАП 1: ФИО+НОМЕР (пустые даты)", len(items_no_date), cid, add)
             if ok is False:
                 add("[x] ЭТАП 1 ОТМЕНЁН! Отправляю текущий файл...")
                 wb.save(result_file)
@@ -586,11 +604,14 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         await asyncio.sleep(2)
         await click_btn(client, bot1, "ФИО+номер")
         await asyncio.sleep(2)
+        # Запоминаем ID последнего сообщения перед отправкой
+        last_msgs = await client.get_messages(e, limit=1)
+        last_msg_id = last_msgs[0].id if last_msgs else 0
+
         await client.send_file(e, tpath)
         add("Файл отправлен в бот1, жду ответ...")
-        sent_at = time.time()
 
-        msg = await wait_xlsx(client, bot1, 300, since=sent_at)
+        msg = await wait_xlsx(client, bot1, 300, since_msg_id=last_msg_id)
         if msg:
             rpath = os.path.join(TEMP_DIR, f"r1_{int(time.time())}.xlsx")
             await client.download_media(msg, file=rpath)
@@ -610,8 +631,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         add(f"ЭТАП 2: СНИЛС -> бот1 ({len(real_snils)} снилс)")
 
         if bot_token and chat_id:
-            await send_confirm(bot_token, chat_id, "ЭТАП 2: СНИЛС (бот1)", len(real_snils), cid)
-            ok = await wait_confirm(cid)
+            ok = await safe_confirm(bot_token, chat_id, "ЭТАП 2: СНИЛС (бот1)", len(real_snils), cid, add)
             if ok is False:
                 add("[x] ЭТАП 2 ОТМЕНЁН! Отправляю текущий файл...")
                 wb.save(result_file)
@@ -631,11 +651,14 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         await asyncio.sleep(2)
         await click_btn(client, bot1, "СНИЛС")
         await asyncio.sleep(2)
+        # Запоминаем ID последнего сообщения перед отправкой
+        last_msgs = await client.get_messages(e, limit=1)
+        last_msg_id = last_msgs[0].id if last_msgs else 0
+
         await client.send_file(e, tpath)
         add("СНИЛС отправлены в бот1, жду ответ...")
-        sent_at = time.time()
 
-        msg = await wait_xlsx(client, bot1, 300, since=sent_at)
+        msg = await wait_xlsx(client, bot1, 300, since_msg_id=last_msg_id)
         if msg:
             rpath = os.path.join(TEMP_DIR, f"r2_{int(time.time())}.xlsx")
             await client.download_media(msg, file=rpath)
@@ -664,8 +687,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         add(f"ЭТАП 3: СНИЛС -> бот2 ({len(snils_still_empty)} снилс, после этапа 2)")
 
         if bot_token and chat_id:
-            await send_confirm(bot_token, chat_id, "ЭТАП 3: СНИЛС (бот2)", len(snils_still_empty), cid)
-            ok = await wait_confirm(cid)
+            ok = await safe_confirm(bot_token, chat_id, "ЭТАП 3: СНИЛС (бот2)", len(snils_still_empty), cid, add)
             if ok is False:
                 add("[x] ЭТАП 3 ОТМЕНЁН! Отправляю текущий файл...")
                 wb.save(result_file)
@@ -680,11 +702,14 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             f.write(txt)
 
         e = await client.get_entity(bot2)
+        # Запоминаем ID последнего сообщения перед отправкой
+        last_msgs = await client.get_messages(e, limit=1)
+        last_msg_id = last_msgs[0].id if last_msgs else 0
+
         await client.send_file(e, tpath)
         add("СНИЛС отправлены в бот2, жду ответ...")
-        sent_at = time.time()
 
-        msg = await wait_xlsx(client, bot2, 300, since=sent_at)
+        msg = await wait_xlsx(client, bot2, 300, since_msg_id=last_msg_id)
         if msg:
             rpath = os.path.join(TEMP_DIR, f"r3_{int(time.time())}.xlsx")
             await client.download_media(msg, file=rpath)
@@ -738,8 +763,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         add(f"ЭТАП 5: ФИО+ДАТА -> бот1 ({len(items_no_phone)} строк)")
 
         if bot_token and chat_id:
-            await send_confirm(bot_token, chat_id, "ЭТАП 5: ФИО+ДАТА (пустые номера)", len(items_no_phone), cid)
-            ok = await wait_confirm(cid)
+            ok = await safe_confirm(bot_token, chat_id, "ЭТАП 5: ФИО+ДАТА (пустые номера)", len(items_no_phone), cid, add)
             if ok is False:
                 add("[x] ЭТАП 5 ОТМЕНЁН! Отправляю текущий файл...")
                 wb.save(result_file)
@@ -759,11 +783,14 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         await asyncio.sleep(2)
         await click_btn(client, bot1, "ФИО+дата")
         await asyncio.sleep(2)
+        # Запоминаем ID последнего сообщения перед отправкой
+        last_msgs = await client.get_messages(e, limit=1)
+        last_msg_id = last_msgs[0].id if last_msgs else 0
+
         await client.send_file(e, tpath)
         add("Файл отправлен в бот1, жду ответ...")
-        sent_at = time.time()
 
-        msg = await wait_xlsx(client, bot1, 300, since=sent_at)
+        msg = await wait_xlsx(client, bot1, 300, since_msg_id=last_msg_id)
         if msg:
             rpath = os.path.join(TEMP_DIR, f"r5_{int(time.time())}.xlsx")
             await client.download_media(msg, file=rpath)
@@ -783,8 +810,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         add(f"ЭТАП 6: ДОБИВ -> бот2 ({len(items_no_phone)} строк)")
 
         if bot_token and chat_id:
-            await send_confirm(bot_token, chat_id, "ЭТАП 6: ДОБИВ (бот2)", len(items_no_phone), cid)
-            ok = await wait_confirm(cid)
+            ok = await safe_confirm(bot_token, chat_id, "ЭТАП 6: ДОБИВ (бот2)", len(items_no_phone), cid, add)
             if ok is False:
                 add("[x] ЭТАП 6 ОТМЕНЁН! Отправляю текущий файл...")
                 wb.save(result_file)
