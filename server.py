@@ -949,7 +949,7 @@ async def handle_full_probev(request):
         bot2 = d.get("bot2", "@proverim123_bot")
         bot_token = d.get("bot_token", "")
         chat_id = d.get("chat_id", "")
-        year_range = d.get("year_range", "")
+        year_range = d.get("year_range", "") or "1945-1975"
         items_no_date = d.get("items_no_date", [])
         items_no_phone = d.get("items_no_phone", [])
         items_snils = d.get("items_snils", [])
