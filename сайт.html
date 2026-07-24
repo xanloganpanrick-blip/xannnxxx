@@ -75,4 +75,956 @@
         .step-num.active { background: #44ff44; color: #000; }
         .table-preview { overflow-x: auto; margin-top: 10px; max-height: 250px; overflow-y: auto; }
         .table-preview table { width: 100%; border-collapse: collapse; font-size: 11px; }
-        .table-preview th { background: #0f0f0f; padding: 6px 8px; text-align: left; font-weight: 600; border-bottom: 1px solid #1a1a1a; white-space: nowrap; position: sticky; top:
+        .table-preview th { background: #0f0f0f; padding: 6px 8px; text-align: left; font-weight: 600; border-bottom: 1px solid #1a1a1a; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+        .table-preview td { padding: 4px 8px; border-bottom: 1px solid #0f0f0a; white-space: nowrap; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+        .table-preview .empty-cell { color: #ff4444; font-style: italic; }
+        .stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+        .stat-item { background: #050505; border: 1px solid #1a1a1a; border-radius: 6px; padding: 8px 14px; text-align: center; min-width: 60px; }
+        .stat-item .stat-num { font-size: 20px; font-weight: 800; }
+        .stat-item .stat-label { font-size: 10px; color: #888; margin-top: 2px; }
+        .split-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+        .dot-green { background: #44ff44; } .dot-red { background: #ff4444; } .dot-yellow { background: #ffaa00; } .dot-gray { background: #444; }
+        .toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); padding: 10px 20px; border-radius: 6px; font-weight: 500; z-index: 9999; max-width: 90%; font-size: 13px; animation: fadeInUp 0.3s ease; }
+        .toast-ok { background: #0a1a0a; border: 1px solid #44ff44; color: #44ff44; }
+        .toast-err { background: #1a0a0a; border: 1px solid #ff4444; color: #ff4444; }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+        .file-list { margin-top: 8px; max-height: 80px; overflow-y: auto; font-size: 11px; color: #666; }
+        .file-list .file-item { padding: 2px 0; }
+        @media (max-width: 768px) { .sidebar { width: 50px; padding: 10px 4px; } .sidebar .logo { font-size: 16px; text-align: center; margin-bottom: 16px; } .nav-btn { font-size: 9px; text-align: center; padding: 8px 2px; } .nav-btn::first-letter { font-size: 14px; } .main { margin-left: 50px; padding: 12px; max-width: calc(100% - 50px); } .split-col { grid-template-columns: 1fr; } .stat-row { gap: 6px; } .stat-item { padding: 6px 10px; min-width: 50px; } .stat-item .stat-num { font-size: 16px; } .card { padding: 14px 16px; } }
+    </style>
+</head>
+<body>
+<div class="app">
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+        <div class="logo"><span>X</span></div>
+        <button class="nav-btn active" data-page="accounts">Acc</button>
+        <button class="nav-btn" data-page="probiv">Probev</button>
+        <button class="nav-btn" data-page="checker">Check</button>
+        <button class="nav-btn" data-page="dobiv">Dobiv</button>
+        <button class="nav-btn" data-page="server">Server</button>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div class="main">
+
+        <!-- ========== SERVER ========== -->
+        <div class="page" id="page-server">
+            <div class="title">Server</div>
+            <div class="subtitle">Backend connection settings</div>
+            <div class="card">
+                <h3>Connection</h3>
+                <p class="mb-16"><span class="dot" id="sDot"></span><span id="sText">Checking...</span></p>
+                <input type="text" id="sUrl" placeholder="https://your-backend.railway.app">
+                <div class="flex">
+                    <button class="btn-white" onclick="checkServer()">Check</button>
+                    <button class="btn-dark" onclick="saveServer()">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== ACCOUNTS ========== -->
+        <div class="page active" id="page-accounts">
+            <div class="title">Accounts</div>
+            <div class="subtitle">Telegram accounts and notification bot</div>
+            <div class="card">
+                <h3>Telegram accounts</h3>
+                <div id="accList"><p class="text-sm">No accounts. Add first.</p></div>
+                <button class="btn-white mt-8" onclick="showAddAcc()">+ Add account</button>
+            </div>
+            <div class="card">
+                <h3>Notification bot</h3>
+                <p class="text-sm mb-8">Create bot via @BotFather. Get your ID via @userinfobot.</p>
+                <input type="text" id="botToken" placeholder="Bot token">
+                <input type="text" id="botChatId" placeholder="Chat ID">
+                <div class="flex">
+                    <button class="btn-white" onclick="saveBotConfig()">Save</button>
+                    <button class="btn-dark" onclick="testBot()">Test</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== PROBEV ========== -->
+        <div class="page" id="page-probiv">
+            <div class="title">Probev</div>
+            <div class="subtitle">Full cycle: FIO+phone -> SNILS -> FIO+date -> Dobiv (7 stages)</div>
+
+            <div class="card">
+                <h3>1. Upload tables (ZIP or multiple XLSX)</h3>
+                <div class="drop-zone" id="dropZone">
+                    <div class="dz-label">Drop ZIP or XLSX files here, or click to select</div>
+                    <div class="dz-hint">Supports: ZIP archive with XLSX, or multiple XLSX files</div>
+                    <div class="dz-files" id="uploadFileList"></div>
+                    <input type="file" id="fileInput" accept=".xlsx,.xls,.zip" multiple style="display:none">
+                </div>
+                <div id="uploadInfo" class="text-sm"></div>
+                <div class="flex mt-8">
+                    <button class="btn-dark btn-sm" onclick="document.getElementById('fileInput').click()">Choose files</button>
+                    <button class="btn-green btn-sm" id="mergeUploadBtn" onclick="mergeUploaded()">Merge & load</button>
+                    <button class="btn-red btn-sm" onclick="clearUploads()">Clear</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>2. Table preview</h3>
+                <div class="table-preview" id="tablePreview" style="max-height:250px;overflow:auto;"></div>
+                <div class="stat-row mt-8" id="tableStats"></div>
+                <div class="text-sm mt-8" id="tableNamesInfo"></div>
+            </div>
+
+            <div class="card">
+                <h3>3. Probev settings</h3>
+                <div class="split-col">
+                    <div>
+                        <label class="text-sm">Telegram account</label>
+                        <select id="pAcc"><option value="">— Select —</option></select>
+                    </div>
+                    <div>
+                        <label class="text-sm">Year range</label>
+                        <input type="text" id="yearRange" value="1945-1975">
+                    </div>
+                </div>
+                <div class="split-col mt-8">
+                    <div>
+                        <label class="text-sm">Bot 1 (primary)</label>
+                        <input type="text" id="bot1" value="@osint_pam_pam_bot">
+                    </div>
+                    <div>
+                        <label class="text-sm">Bot 2 (dobiv)</label>
+                        <input type="text" id="bot2" value="@proverim123_bot">
+                    </div>
+                </div>
+                <div class="flex mt-8">
+                    <button class="btn-white" id="btnProbiv" onclick="startProbiv()">START PROBEV</button>
+                    <button class="btn-red" id="btnStopProbiv" onclick="stopProbiv()" disabled>STOP</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>4. Log</h3>
+                <div class="log-box" id="pLog"><span class="dim">Waiting...</span></div>
+                <div class="flex mt-8">
+                    <button class="btn-dark btn-sm" onclick="document.getElementById('pLog').innerHTML='<span class=\"dim\">Cleared.</span>'">Clear log</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== CHECKER ========== -->
+        <div class="page" id="page-checker">
+            <div class="title">Checker</div>
+            <div class="subtitle">Filter table by phone numbers from TXT</div>
+            <div class="card">
+                <h3>1. Upload table (XLSX)</h3>
+                <button class="btn-dark mb-8" onclick="document.getElementById('chkXlsx').click()">Choose XLSX</button>
+                <input type="file" id="chkXlsx" accept=".xlsx,.xls" style="display:none" onchange="loadChkXlsx(event)">
+                <div id="chkXlsxInfo" class="text-sm"></div>
+            </div>
+            <div class="card">
+                <h3>2. Upload phone list (TXT)</h3>
+                <button class="btn-dark mb-8" onclick="document.getElementById('chkTxt').click()">Choose TXT</button>
+                <input type="file" id="chkTxt" accept=".txt" style="display:none" onchange="loadChkTxt(event)">
+                <div id="chkTxtInfo" class="text-sm"></div>
+            </div>
+            <div class="card">
+                <h3>3. Result</h3>
+                <div class="flex mb-8">
+                    <button class="btn-white" onclick="runChecker()">Run</button>
+                    <button class="btn-dark btn-sm" id="btnChkDownload" style="display:none" onclick="downloadChkResult()">Download XLSX</button>
+                </div>
+                <div id="chkResult"></div>
+            </div>
+        </div>
+
+        <!-- ========== DOBIV ========== -->
+        <div class="page" id="page-dobiv">
+            <div class="title">Dobiv</div>
+            <div class="subtitle">Merge tables: fill gaps from source</div>
+            <div class="card">
+                <h3>1. Main table (XLSX)</h3>
+                <button class="btn-dark mb-8" onclick="document.getElementById('dobMain').click()">Choose XLSX</button>
+                <input type="file" id="dobMain" accept=".xlsx,.xls" style="display:none" onchange="loadDobMain(event)">
+                <div id="dobMainInfo" class="text-sm"></div>
+            </div>
+            <div class="card">
+                <h3>2. Source table (XLSX)</h3>
+                <button class="btn-dark mb-8" onclick="document.getElementById('dobSrc').click()">Choose XLSX</button>
+                <input type="file" id="dobSrc" accept=".xlsx,.xls" style="display:none" onchange="loadDobSrc(event)">
+                <div id="dobSrcInfo" class="text-sm"></div>
+            </div>
+            <div class="card">
+                <h3>3. Result</h3>
+                <div class="flex mb-8">
+                    <button class="btn-white" onclick="runDobiv()">Run</button>
+                    <button class="btn-dark btn-sm" id="btnDobDownload" style="display:none" onclick="downloadDobResult()">Download XLSX</button>
+                </div>
+                <div id="dobResult"></div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- MODAL: Add account -->
+<div class="modal" id="accModal">
+    <div class="modal-box">
+        <button class="modal-close" onclick="closeAccModal()">x</button>
+        <h3>Add Telegram account</h3>
+        <div id="accStep1">
+            <input type="text" id="accPhone" placeholder="Phone (+79...)" value="+7">
+            <button class="btn-white btn-block" onclick="sendCode()">Send code</button>
+        </div>
+        <div id="accStep2" style="display:none">
+            <input type="text" id="accCode" placeholder="Code from Telegram">
+            <button class="btn-white btn-block mb-8" onclick="verifyCode()">Verify</button>
+        </div>
+        <div id="accStep2FA" style="display:none">
+            <p class="text-sm mb-8">2FA password required:</p>
+            <input type="password" id="acc2fa" placeholder="2FA password">
+            <button class="btn-white btn-block" onclick="verify2FA()">Login</button>
+        </div>
+        <div id="accStepDone" style="display:none">
+            <p class="green mb-8">Account added!</p>
+        </div>
+        <button class="btn-dark btn-block mt-16" onclick="closeAccModal()">Close</button>
+    </div>
+</div>
+
+<script>
+// ==================== DATABASE ====================
+var DB = JSON.parse(localStorage.getItem('xdb') || '{"accs":[],"botToken":"","botChatId":""}');
+function saveDB() { localStorage.setItem('xdb', JSON.stringify(DB)); }
+
+function getServerUrl() {
+    return localStorage.getItem('xsrv') || window.location.origin;
+}
+function setServerUrl(u) { localStorage.setItem('xsrv', u); }
+
+// ==================== UTILITIES ====================
+function cleanPhone(t) {
+    if (!t) return '';
+    var d = (''+t).replace(/\D/g, '');
+    if (d.length >= 10) return '+7' + d.slice(-10);
+    return d;
+}
+
+function normFio(t) {
+    if (!t) return '';
+    return (''+t).trim().toUpperCase().replace(/Ё/g,'Е').replace(/\s+/g,' ');
+}
+
+function parseDate(v) {
+    if (!v) return '';
+    var s = ''+v;
+    if (s.match(/^\d{4,5}$/) && parseInt(s) > 30000) {
+        var d = new Date((parseInt(s) - 25569) * 86400 * 1000);
+        return ('0'+d.getDate()).slice(-2) + '.' + ('0'+(d.getMonth()+1)).slice(-2) + '.' + d.getFullYear();
+    }
+    var m = s.match(/(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})/);
+    if (m) {
+        var y = m[3];
+        if (y.length === 2) y = (parseInt(y) < 30 ? '20' : '19') + y;
+        return m[1].padStart(2,'0') + '.' + m[2].padStart(2,'0') + '.' + y;
+    }
+    return '';
+}
+
+function esc(s) { return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function toast(msg, ok) {
+    var t = document.createElement('div');
+    t.className = 'toast ' + (ok ? 'toast-ok' : 'toast-err');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(function(){ t.remove(); }, 4000);
+}
+
+function addLog(msg, cls) {
+    var el = document.getElementById('pLog');
+    el.innerHTML += '<div class="' + (cls||'') + '">' + msg + '</div>';
+    el.scrollTop = el.scrollHeight;
+}
+
+// ==================== NAVIGATION ====================
+document.querySelectorAll('.nav-btn').forEach(function(b) {
+    b.onclick = function() {
+        document.querySelectorAll('.nav-btn').forEach(function(x) { x.classList.remove('active'); });
+        b.classList.add('active');
+        document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+        var pg = document.getElementById('page-' + b.dataset.page);
+        if (pg) pg.classList.add('active');
+        if (b.dataset.page === 'accounts') renderAccs();
+        if (b.dataset.page === 'probiv') refreshAccSelects();
+    };
+});
+
+// ==================== SERVER ====================
+async function checkServer() {
+    var url = document.getElementById('sUrl').value.trim() || getServerUrl();
+    document.getElementById('sUrl').value = url;
+    try {
+        var r = await fetch(url + '/health');
+        var d = await r.json();
+        if (d.ok) {
+            document.getElementById('sDot').className = 'dot dot-green';
+            document.getElementById('sText').textContent = 'Connected (' + d.message + ')';
+        } else {
+            throw new Error('No ok');
+        }
+    } catch(e) {
+        document.getElementById('sDot').className = 'dot dot-red';
+        document.getElementById('sText').textContent = 'Not connected';
+    }
+}
+
+function saveServer() {
+    var url = document.getElementById('sUrl').value.trim();
+    setServerUrl(url);
+    toast('Saved: ' + url, true);
+    checkServer();
+}
+
+// ==================== ACCOUNTS ====================
+function renderAccs() {
+    var el = document.getElementById('accList');
+    if (!DB.accs.length) { el.innerHTML = '<p class="text-sm">No accounts.</p>'; return; }
+    el.innerHTML = DB.accs.map(function(a, i) {
+        return '<div class="list-item">' +
+            '<div class="info"><div class="name">' + (a.name || 'No name') + '</div><div class="phone">' + a.phone + '</div></div>' +
+            '<button class="btn-red btn-sm" onclick="delAcc('+i+')">Remove</button>' +
+        '</div>';
+    }).join('');
+    document.getElementById('botToken').value = DB.botToken || '';
+    document.getElementById('botChatId').value = DB.botChatId || '';
+}
+
+function delAcc(i) {
+    if (!confirm('Remove account?')) return;
+    DB.accs.splice(i, 1);
+    saveDB();
+    renderAccs();
+}
+
+function showAddAcc() {
+    document.getElementById('accModal').classList.add('active');
+    document.getElementById('accStep1').style.display = 'block';
+    document.getElementById('accStep2').style.display = 'none';
+    document.getElementById('accStep2FA').style.display = 'none';
+    document.getElementById('accStepDone').style.display = 'none';
+    document.getElementById('accPhone').value = '+7';
+    document.getElementById('accCode').value = '';
+    document.getElementById('acc2fa').value = '';
+}
+function closeAccModal() { document.getElementById('accModal').classList.remove('active'); }
+
+async function apiPost(endpoint, body) {
+    var srv = getServerUrl();
+    if (!srv) throw new Error('Server not configured.');
+    var r = await fetch(srv + endpoint, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+    });
+    var d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Server error');
+    return d;
+}
+
+var _pendingPhone = '';
+async function sendCode() {
+    var ph = document.getElementById('accPhone').value.trim();
+    if (!ph) return toast('Enter phone', false);
+    try {
+        await apiPost('/send-code', {phone: ph});
+        _pendingPhone = ph;
+        document.getElementById('accStep1').style.display = 'none';
+        document.getElementById('accStep2').style.display = 'block';
+        toast('Code sent', true);
+    } catch(e) { toast('Error: ' + e.message, false); }
+}
+
+async function verifyCode() {
+    var code = document.getElementById('accCode').value.trim();
+    if (!code) return toast('Enter code', false);
+    try {
+        var d = await apiPost('/verify-code', {phone: _pendingPhone, code: code, password: ''});
+        if (d.need_2fa) {
+            document.getElementById('accStep2').style.display = 'none';
+            document.getElementById('accStep2FA').style.display = 'block';
+            return;
+        }
+        DB.accs.push({phone: d.phone, session: d.session, name: d.name});
+        saveDB();
+        document.getElementById('accStep2').style.display = 'none';
+        document.getElementById('accStepDone').style.display = 'block';
+        renderAccs();
+        toast('Account added!', true);
+    } catch(e) { toast('Error: ' + e.message, false); }
+}
+
+async function verify2FA() {
+    var pwd = document.getElementById('acc2fa').value.trim();
+    if (!pwd) return toast('Enter password', false);
+    try {
+        var d = await apiPost('/verify-code', {phone: _pendingPhone, code: '00000', password: pwd});
+        DB.accs.push({phone: d.phone, session: d.session, name: d.name});
+        saveDB();
+        document.getElementById('accStep2FA').style.display = 'none';
+        document.getElementById('accStepDone').style.display = 'block';
+        renderAccs();
+        toast('Account added!', true);
+    } catch(e) { toast('Error: ' + e.message, false); }
+}
+
+function saveBotConfig() {
+    DB.botToken = document.getElementById('botToken').value.trim();
+    DB.botChatId = document.getElementById('botChatId').value.trim();
+    saveDB();
+    toast('Bot config saved', true);
+}
+
+async function testBot() {
+    var token = document.getElementById('botToken').value.trim();
+    var cid = document.getElementById('botChatId').value.trim();
+    if (!token || !cid) return toast('Fill token and ID', false);
+    try {
+        var r = await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({chat_id: parseInt(cid), text: 'X: test message'})
+        });
+        var d = await r.json();
+        if (d.ok) toast('Bot works!', true);
+        else toast('Error: ' + JSON.stringify(d), false);
+    } catch(e) { toast('Error: ' + e.message, false); }
+}
+
+// ==================== UPLOAD / MERGE ====================
+var uploadedFiles = [];
+var mergedData = null;
+var tableNames = [];
+
+function clearUploads() {
+    uploadedFiles = [];
+    mergedData = null;
+    tableNames = [];
+    document.getElementById('uploadFileList').innerHTML = '';
+    document.getElementById('uploadInfo').textContent = '';
+    document.getElementById('tablePreview').innerHTML = '';
+    document.getElementById('tableStats').innerHTML = '';
+    document.getElementById('tableNamesInfo').textContent = '';
+    document.getElementById('fileInput').value = '';
+}
+
+function updateFileList() {
+    var el = document.getElementById('uploadFileList');
+    if (!uploadedFiles.length) { el.innerHTML = ''; return; }
+    el.innerHTML = uploadedFiles.map(function(f) {
+        return '<div class="file-item">' + f.name + ' (' + (f.size/1024).toFixed(1) + ' KB)</div>';
+    }).join('');
+}
+
+// Drag & Drop
+var dz = document.getElementById('dropZone');
+if (dz) {
+    dz.addEventListener('click', function() { document.getElementById('fileInput').click(); });
+    dz.addEventListener('dragover', function(e) { e.preventDefault(); dz.classList.add('drag'); });
+    dz.addEventListener('dragleave', function() { dz.classList.remove('drag'); });
+    dz.addEventListener('drop', function(e) {
+        e.preventDefault();
+        dz.classList.remove('drag');
+        var files = Array.from(e.dataTransfer.files);
+        for (var i = 0; i < files.length; i++) {
+            var f = files[i];
+            var ext = f.name.split('.').pop().toLowerCase();
+            if (ext === 'xlsx' || ext === 'xls' || ext === 'zip') {
+                uploadedFiles.push(f);
+            }
+        }
+        updateFileList();
+        toast('Added ' + files.length + ' files', true);
+    });
+}
+
+document.getElementById('fileInput').addEventListener('change', function(e) {
+    var files = Array.from(e.target.files);
+    for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        var ext = f.name.split('.').pop().toLowerCase();
+        if (ext === 'xlsx' || ext === 'xls' || ext === 'zip') {
+            uploadedFiles.push(f);
+        }
+    }
+    updateFileList();
+    toast('Added ' + files.length + ' files', true);
+});
+
+async function mergeUploaded() {
+    if (!uploadedFiles.length) return toast('No files uploaded', false);
+    
+    var btn = document.getElementById('mergeUploadBtn');
+    btn.disabled = true;
+    btn.textContent = 'Merging...';
+    
+    try {
+        var zipFiles = uploadedFiles.filter(function(f) {
+            return f.name.split('.').pop().toLowerCase() === 'zip';
+        });
+        var singleFiles = uploadedFiles.filter(function(f) {
+            var ext = f.name.split('.').pop().toLowerCase();
+            return ext === 'xlsx' || ext === 'xls';
+        });
+        
+        if (zipFiles.length) {
+            var formData = new FormData();
+            formData.append('file', zipFiles[0]);
+            
+            var srv = getServerUrl();
+            var resp = await fetch(srv + '/upload-zip', {
+                method: 'POST',
+                body: formData
+            });
+            var data = await resp.json();
+            
+            if (data.ok) {
+                mergedData = {headers: data.headers, rows: data.rows};
+                tableNames = data.names || [];
+                document.getElementById('uploadInfo').textContent = 'Merged ' + data.tables_count + ' tables, ' + data.count + ' rows';
+                renderTablePreview();
+                refreshAccSelects();
+                toast('Merged successfully!', true);
+            } else {
+                toast('Merge error: ' + (data.error || 'Unknown'), false);
+            }
+        } else if (singleFiles.length) {
+            var allTables = [];
+            for (var i = 0; i < singleFiles.length; i++) {
+                var f = singleFiles[i];
+                var buf = await f.arrayBuffer();
+                var wb = XLSX.read(buf, {type: 'array'});
+                var ws = wb.Sheets[wb.SheetNames[0]];
+                var data = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
+                if (data.length < 2) continue;
+                allTables.push({
+                    headers: data[0],
+                    rows: data.slice(1),
+                    name: f.name
+                });
+            }
+            
+            if (!allTables.length) return toast('No valid tables found', false);
+            
+            var baseHeaders = allTables[0].headers;
+            var addrIdx = -1;
+            for (var j = 0; j < baseHeaders.length; j++) {
+                if (baseHeaders[j].toLowerCase().includes('адрес') || baseHeaders[j].toLowerCase().includes('address')) {
+                    addrIdx = j; break;
+                }
+            }
+            var tableNumCol = 'N tablicy';
+            var newHeaders = addrIdx >= 0 ? 
+                baseHeaders.slice(0, addrIdx).concat([tableNumCol]).concat(baseHeaders.slice(addrIdx)) :
+                [tableNumCol].concat(baseHeaders);
+            
+            var allRows = [];
+            tableNames = [];
+            for (var t = 0; t < allTables.length; t++) {
+                var tbl = allTables[t];
+                tableNames.push(tbl.name);
+                for (var r = 0; r < tbl.rows.length; r++) {
+                    var row = tbl.rows[r];
+                    var rowMap = {};
+                    for (var k = 0; k < tbl.headers.length; k++) {
+                        if (k < row.length) rowMap[tbl.headers[k].toLowerCase()] = row[k];
+                    }
+                    var newRow = [];
+                    for (var h = 0; h < newHeaders.length; h++) {
+                        if (newHeaders[h] === tableNumCol) newRow.push(String(t + 1));
+                        else newRow.push(rowMap[newHeaders[h].toLowerCase()] || '');
+                    }
+                    allRows.push(newRow);
+                }
+            }
+            
+            mergedData = {headers: newHeaders, rows: allRows};
+            document.getElementById('uploadInfo').textContent = 'Merged ' + allTables.length + ' tables, ' + allRows.length + ' rows';
+            renderTablePreview();
+            refreshAccSelects();
+            toast('Merged ' + allTables.length + ' tables!', true);
+        } else {
+            toast('No valid XLSX or ZIP files', false);
+        }
+    } catch(e) {
+        toast('Error: ' + e.message, false);
+        console.error(e);
+    }
+    
+    btn.disabled = false;
+    btn.textContent = 'Merge & load';
+}
+
+function renderTablePreview() {
+    if (!mergedData || !mergedData.rows || !mergedData.rows.length) {
+        document.getElementById('tablePreview').innerHTML = '';
+        document.getElementById('tableStats').innerHTML = '';
+        document.getElementById('tableNamesInfo').textContent = '';
+        return;
+    }
+    
+    var h = mergedData.headers || [];
+    var rows = mergedData.rows || [];
+    
+    var emptyDate = 0, emptyPhone = 0, emptySnils = 0;
+    var fioIdx = -1, dateIdx = -1, phoneIdx = -1, snilsIdx = -1;
+    for (var i = 0; i < h.length; i++) {
+        var hh = h[i].toLowerCase();
+        if (hh.includes('fio') || hh.includes('фио') || hh.includes('имя') || hh.includes('фамилия')) fioIdx = i;
+        if (hh.includes('дата') || hh.includes('date') || hh.includes('рожд')) dateIdx = i;
+        if (hh.includes('номер') || hh.includes('телефон') || hh.includes('phone') || hh.includes('tel')) phoneIdx = i;
+        if (hh.includes('снилс') || hh.includes('snils')) snilsIdx = i;
+    }
+    
+    for (var r = 0; r < rows.length; r++) {
+        var row = rows[r];
+        if (dateIdx >= 0 && dateIdx < row.length && (!row[dateIdx] || row[dateIdx] === 'None' || row[dateIdx] === '0')) emptyDate++;
+        if (phoneIdx >= 0 && phoneIdx < row.length && (!row[phoneIdx] || row[phoneIdx] === 'None' || row[phoneIdx] === '0')) emptyPhone++;
+        if (snilsIdx >= 0 && snilsIdx < row.length && (!row[snilsIdx] || row[snilsIdx] === 'None' || row[snilsIdx] === '0')) emptySnils++;
+    }
+    
+    document.getElementById('tableStats').innerHTML =
+        '<div class="stat-item"><div class="stat-num">' + rows.length + '</div><div class="stat-label">Total rows</div></div>' +
+        '<div class="stat-item"><div class="stat-num" style="color:#ff4444">' + emptyDate + '</div><div class="stat-label">No date</div></div>' +
+        '<div class="stat-item"><div class="stat-num" style="color:#ffaa00">' + emptyPhone + '</div><div class="stat-label">No phone</div></div>' +
+        '<div class="stat-item"><div class="stat-num" style="color:#888">' + emptySnils + '</div><div class="stat-label">No SNILS</div></div>';
+    
+    document.getElementById('tableNamesInfo').textContent = 'Tables: ' + (tableNames.length ? tableNames.join(', ') : (rows.length ? '1 table' : ''));
+    
+    var html = '<table><thead><tr>';
+    for (var hi = 0; hi < Math.min(h.length, 10); hi++) {
+        html += '<th>' + esc(h[hi]) + '</th>';
+    }
+    if (h.length > 10) html += '<th>...</th>';
+    html += '</tr></thead><tbody>';
+    
+    var maxRows = Math.min(rows.length, 30);
+    for (var ri = 0; ri < maxRows; ri++) {
+        var rw = rows[ri];
+        html += '<tr>';
+        for (var ci = 0; ci < Math.min(rw.length, 10); ci++) {
+            var val = rw[ci] || '';
+            var cls = '';
+            if (ci === dateIdx && (!val || val === 'None' || val === '0')) cls = 'empty-cell';
+            if (ci === phoneIdx && (!val || val === 'None' || val === '0')) cls = 'empty-cell';
+            html += '<td class="' + cls + '">' + esc(val || '-') + '</td>';
+        }
+        if (rw.length > 10) html += '<td>...</td>';
+        html += '</tr>';
+    }
+    if (rows.length > 30) html += '<tr><td colspan="10" style="text-align:center;color:#888">... ' + (rows.length - 30) + ' more rows</td></tr>';
+    html += '</tbody></table>';
+    document.getElementById('tablePreview').innerHTML = html;
+}
+
+// ==================== PROBEV ====================
+var isProbevRunning = false;
+
+function refreshAccSelects() {
+    var s = document.getElementById('pAcc');
+    s.innerHTML = '<option value="">— Select —</option>';
+    DB.accs.forEach(function(a) {
+        s.innerHTML += '<option value="' + a.session + '">' + (a.name || a.phone) + '</option>';
+    });
+}
+
+async function startProbiv() {
+    var btn = document.getElementById('btnProbiv');
+    var stopBtn = document.getElementById('btnStopProbiv');
+    if (isProbevRunning || btn.disabled) return;
+    
+    if (!mergedData || !mergedData.rows || !mergedData.rows.length) {
+        return toast('Load table first (Merge & load)', false);
+    }
+    
+    var ss = document.getElementById('pAcc').value;
+    if (!ss) return toast('Select Telegram account', false);
+    
+    var botToken = DB.botToken || '';
+    var botChatId = DB.botChatId || '';
+    if (!botToken || !botChatId) {
+        addLog('[!] Notification bot not configured.', 'warn');
+    }
+    
+    isProbevRunning = true;
+    btn.disabled = true;
+    btn.textContent = 'RUNNING...';
+    stopBtn.disabled = false;
+    
+    var bot1 = document.getElementById('bot1').value.trim() || '@osint_pam_pam_bot';
+    var bot2 = document.getElementById('bot2').value.trim() || '@proverim123_bot';
+    var yearRange = document.getElementById('yearRange').value.trim() || '1945-1975';
+    
+    var headers = mergedData.headers || [];
+    var rows = mergedData.rows || [];
+    
+    var fioIdx = -1, dateIdx = -1, phoneIdx = -1, snilsIdx = -1, addrIdx = -1, tableNumIdx = -1;
+    for (var i = 0; i < headers.length; i++) {
+        var h = headers[i].toLowerCase();
+        if (h.includes('fio') || h.includes('фио') || h.includes('имя') || h.includes('фамилия')) fioIdx = i;
+        if (h.includes('дата') || h.includes('date') || h.includes('рожд')) dateIdx = i;
+        if (h.includes('номер') || h.includes('телефон') || h.includes('phone') || h.includes('tel')) phoneIdx = i;
+        if (h.includes('снилс') || h.includes('snils')) snilsIdx = i;
+        if (h.includes('адрес') || h.includes('адресс') || h.includes('address')) addrIdx = i;
+        if (h.includes('n tablicy') || h === 'n' || h.includes('таблиц')) tableNumIdx = i;
+    }
+    if (fioIdx < 0) fioIdx = 1;
+    if (dateIdx < 0) dateIdx = 2;
+    if (phoneIdx < 0) phoneIdx = 3;
+    if (snilsIdx < 0) snilsIdx = 4;
+    if (addrIdx < 0) addrIdx = 5;
+    
+    var itemsNoDate = [];
+    var itemsNoPhone = [];
+    var originalRows = [];
+    
+    for (var ri = 0; ri < rows.length; ri++) {
+        var row = rows[ri];
+        var fio = fioIdx >= 0 && row[fioIdx] ? String(row[fioIdx]).trim() : '';
+        var date = dateIdx >= 0 && row[dateIdx] ? String(row[dateIdx]).trim() : '';
+        var phone = phoneIdx >= 0 && row[phoneIdx] ? String(row[phoneIdx]).trim() : '';
+        var snils = snilsIdx >= 0 && row[snilsIdx] ? String(row[snilsIdx]).trim() : '';
+        var addr = addrIdx >= 0 && row[addrIdx] ? String(row[addrIdx]).trim() : '';
+        var tableNum = tableNumIdx >= 0 && row[tableNumIdx] ? String(row[tableNumIdx]).trim() : String(ri + 1);
+        
+        originalRows.push([tableNum, fio, date, phone, snils, addr]);
+        
+        if (fio && phone && (!date || date === 'None' || date === '0')) {
+            itemsNoDate.push({fio: normFio(fio), phone: cleanPhone(phone)});
+        }
+        if (fio && date && (!phone || phone === 'None' || phone === '0')) {
+            itemsNoPhone.push({fio: normFio(fio), date: parseDate(date)});
+        }
+    }
+    
+    addLog('=== START PROBEV ===', 'ok');
+    addLog('Rows: ' + rows.length + ', without date: ' + itemsNoDate.length + ', without phone: ' + itemsNoPhone.length, 'warn');
+    
+    try {
+        var payload = {
+            session: ss,
+            bot1: bot1,
+            bot2: bot2,
+            bot_token: botToken,
+            chat_id: botChatId,
+            year_range: yearRange,
+            items_no_date: itemsNoDate,
+            items_no_phone: itemsNoPhone,
+            items_snils: [],
+            original_rows: originalRows,
+            tables_names: tableNames.length ? tableNames : []
+        };
+        
+        var resp = await apiPost('/full-probev', payload);
+        
+        if (resp.log && resp.log.length) {
+            resp.log.forEach(function(l) { addLog(l, 'dim'); });
+        }
+        if (resp.stopped) {
+            addLog('[!] Stopped by user', 'err');
+        } else if (resp.cancelled) {
+            addLog('[!] Cancelled', 'err');
+        } else {
+            addLog('[v] Probev completed!', 'ok');
+        }
+    } catch(e) {
+        addLog('[x] ERROR: ' + e.message, 'err');
+        toast('Error: ' + e.message, false);
+    }
+    
+    isProbevRunning = false;
+    btn.disabled = false;
+    btn.textContent = 'START PROBEV';
+    stopBtn.disabled = true;
+}
+
+async function stopProbiv() {
+    try {
+        var srv = getServerUrl();
+        await fetch(srv + '/stop', {method: 'POST'});
+        addLog('[STOP] Stop requested', 'warn');
+        toast('Stop requested', true);
+    } catch(e) {
+        toast('Stop error: ' + e.message, false);
+    }
+}
+
+// ==================== CHECKER ====================
+var _chkData = null, _chkPhones = null, _chkResultData = null;
+
+function loadChkXlsx(e) {
+    var f = e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+        var wb = XLSX.read(ev.target.result, {type: 'array'});
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        _chkData = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
+        document.getElementById('chkXlsxInfo').textContent = 'Loaded: ' + f.name + ' (' + (_chkData.length-1) + ' rows)';
+    };
+    reader.readAsArrayBuffer(f);
+}
+
+function loadChkTxt(e) {
+    var f = e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+        var txt = ev.target.result;
+        _chkPhones = txt.split(/[\r\n]+/).map(function(l){ return l.replace(/\D/g,''); }).filter(function(p){ return p.length >= 10; });
+        document.getElementById('chkTxtInfo').textContent = 'Loaded: ' + f.name + ' (' + _chkPhones.length + ' phones)';
+    };
+    reader.readAsText(f);
+}
+
+function runChecker() {
+    if (!_chkData || !_chkPhones) return toast('Upload both files', false);
+    var phoneIdx = -1;
+    var headers = _chkData[0];
+    for (var i = 0; i < headers.length; i++) {
+        var h = (''+headers[i]).toUpperCase();
+        if (h.includes('TEL') || h.includes('NOMER') || h.includes('PHONE') || h.includes('NUMBER')) { phoneIdx = i; break; }
+    }
+    if (phoneIdx < 0) phoneIdx = 2;
+    
+    var result = [headers];
+    var found = 0;
+    var phoneSet = {};
+    _chkPhones.forEach(function(p){ phoneSet[p.slice(-10)] = true; });
+    
+    for (var i = 1; i < _chkData.length; i++) {
+        var row = _chkData[i];
+        if (!row || !row[phoneIdx]) continue;
+        var p = (''+row[phoneIdx]).replace(/\D/g,'');
+        if (phoneSet[p.slice(-10)]) {
+            result.push(row);
+            found++;
+        }
+    }
+    
+    _chkResultData = result;
+    document.getElementById('chkResult').innerHTML = '<p>Matches: <b>' + found + '</b> of ' + (_chkData.length-1) + ' rows</p>';
+    document.getElementById('btnChkDownload').style.display = found ? 'inline-block' : 'none';
+}
+
+function downloadChkResult() {
+    if (!_chkResultData) return;
+    var ws = XLSX.utils.aoa_to_sheet(_chkResultData);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Result');
+    XLSX.writeFile(wb, 'checker_result.xlsx');
+}
+
+// ==================== DOBIV ====================
+var _dobMain = null, _dobSrc = null, _dobResult = null;
+
+function loadDobMain(e) {
+    var f = e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+        var wb = XLSX.read(ev.target.result, {type: 'array'});
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        _dobMain = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
+        document.getElementById('dobMainInfo').textContent = 'Loaded: ' + f.name + ' (' + (_dobMain.length-1) + ' rows)';
+    };
+    reader.readAsArrayBuffer(f);
+}
+
+function loadDobSrc(e) {
+    var f = e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+        var wb = XLSX.read(ev.target.result, {type: 'array'});
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        _dobSrc = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
+        document.getElementById('dobSrcInfo').textContent = 'Loaded: ' + f.name + ' (' + (_dobSrc.length-1) + ' rows)';
+    };
+    reader.readAsArrayBuffer(f);
+}
+
+function runDobiv() {
+    if (!_dobMain || !_dobSrc) return toast('Upload both tables', false);
+    
+    var srcFio = 0, srcDate = 1, srcPhone = 2;
+    var hSrc = _dobSrc[0];
+    for (var i = 0; i < hSrc.length; i++) {
+        var h = (''+hSrc[i]).toUpperCase();
+        if (h.includes('FIO') || h.includes('NAME')) srcFio = i;
+        if (h.includes('DATE') || h.includes('BIRTH')) srcDate = i;
+        if (h.includes('TEL') || h.includes('NOMER') || h.includes('PHONE')) srcPhone = i;
+    }
+    
+    var mainFio = 1, mainDate = 2, mainPhone = 3;
+    if (_dobMain[0].length >= 4) {
+        for (var j = 0; j < _dobMain[0].length; j++) {
+            var hm = (''+_dobMain[0][j]).toUpperCase();
+            if (hm.includes('FIO')) mainFio = j;
+            if (hm.includes('DATE')) mainDate = j;
+            if (hm.includes('NOMER') || hm.includes('TEL') || hm.includes('PHONE')) mainPhone = j;
+        }
+    }
+    
+    var result = JSON.parse(JSON.stringify(_dobMain));
+    var filled = 0;
+    
+    for (var si = 1; si < _dobSrc.length; si++) {
+        var sr = _dobSrc[si];
+        if (!sr || !sr[srcFio]) continue;
+        var sfio = normFio(sr[srcFio]);
+        var sdate = parseDate(sr[srcDate]);
+        var sphone = cleanPhone(sr[srcPhone]);
+        
+        for (var mi = 1; mi < result.length; mi++) {
+            var mr = result[mi];
+            if (!mr) continue;
+            var mfio = normFio(mr[mainFio]);
+            if (mfio === sfio) {
+                if (sdate && (!mr[mainDate] || mr[mainDate] === 'None' || mr[mainDate] === '0')) {
+                    mr[mainDate] = sdate;
+                    filled++;
+                }
+                if (sphone && (!mr[mainPhone] || mr[mainPhone] === 'None' || mr[mainPhone] === '0')) {
+                    mr[mainPhone] = sphone;
+                    filled++;
+                }
+                break;
+            }
+        }
+    }
+    
+    _dobResult = result;
+    document.getElementById('dobResult').innerHTML = '<p>Filled cells: <b>' + filled + '</b></p>';
+    document.getElementById('btnDobDownload').style.display = 'inline-block';
+}
+
+function downloadDobResult() {
+    if (!_dobResult) return;
+    var ws = XLSX.utils.aoa_to_sheet(_dobResult);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Result');
+    XLSX.writeFile(wb, 'dobiv_result.xlsx');
+}
+
+// ==================== INIT ====================
+(function init() {
+    document.getElementById('sUrl').value = getServerUrl();
+    document.getElementById('botToken').value = DB.botToken || '';
+    document.getElementById('botChatId').value = DB.botChatId || '';
+    renderAccs();
+    refreshAccSelects();
+    checkServer();
+})();
+</script>
+</body>
+</html>
