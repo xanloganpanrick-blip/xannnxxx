@@ -1008,7 +1008,7 @@ function refreshAccSelects() {
     var s = document.getElementById('pAcc');
     s.innerHTML = '<option value="">— Выберите —</option>';
     DB.accs.forEach(function(a) {
-        s.innerHTML += '<option value="' + a.session + '">' + (a.name || a.phone) + '</option>';
+        s.innerHTML += '<option value="' + (a.ss || a.session || '') + '">' + (a.name || a.phone) + '</option>';
     });
 }
 
