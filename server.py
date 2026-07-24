@@ -1327,6 +1327,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     # ФИЛЬТР ДАТ НА СТАРТЕ — вырезаем строки с неподходящим годом ДО всей работы
     rows_kept = 0
     rows_filtered = 0
+    years_seen = {}
     for i, row in enumerate(original_rows):
         date_val = str(row[2] if len(row) > 2 else "").strip()  # COL_DATE = 2
         
@@ -1336,6 +1337,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             if len(parts_d) == 3:
                 try:
                     year = int(parts_d[2])
+                    years_seen[year] = years_seen.get(year, 0) + 1
                     if year < yf or year > yt:
                         rows_filtered += 1
                         continue
@@ -1353,7 +1355,14 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         rows_kept += 1
     
     wb.save(result_file)
-    add(f"Таблица создана: {rows_kept} строк (отфильтровано {rows_filtered} по годам {yf}-{yt}) {elapsed()}")
+    add(f"=== ФИЛЬТР ДАТ {yf}-{yt} ===")
+    add(f"  Всего строк: {len(original_rows)}")
+    add(f"  Оставлено:   {rows_kept}")
+    add(f"  Вырезано:    {rows_filtered} (год вне [{yf}, {yt}])")
+    if years_seen:
+        yr_list = sorted(years_seen.items())
+        add(f"  Года в данных: {', '.join(f'{y}({c})' for y, c in yr_list[:15])}{'...' if len(yr_list) > 15 else ''}")
+    add(f"  {elapsed()}")
 
     # ==================== КЭШ СТРОК (1 сбор вместо 7 пересканов) ====================
     class RowCache:
@@ -1469,7 +1478,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     cache = RowCache()
 
     # ==================== НОРМАЛИЗАЦИЯ ФИО (DeepSeek, batch=200) ====================
-    add(f"DeepSeek: нормализация ФИО... {elapsed()}")
+    add(f"=== DeepSeek: нормализация ФИО ===")
     
     fio_rows = []
     fio_values = []
@@ -1478,7 +1487,10 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             fio_rows.append(r)
             fio_values.append(d['fio'])
     
+    add(f"  ФИО к обработке: {len(fio_values)}")
+    
     BATCH = 200  # Увеличено с 40
+    fio_changed = 0
     # Параллельные вызовы DeepSeek для ФИО (по 3 батча одновременно)
     async def process_fio_batch(batch_vals, batch_rows):
         return await normalize_batch_deepseek(batch_vals, 'fio')
@@ -1498,37 +1510,48 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         for (vals, rows), normalized in zip(chunk, results):
             for j, norm_val in enumerate(normalized):
                 if j < len(rows):
+                    old_val = str(ws.cell(row=rows[j], column=COL_FIO).value or "").strip()
+                    if old_val != norm_val and norm_val:
+                        fio_changed += 1
                     ws.cell(row=rows[j], column=COL_FIO).value = norm_val
         
-        add(f"[DeepSeek ФИО] {chunk_start//BATCH + 1}-{min(chunk_start//BATCH + len(chunk), (len(tasks)+2)//3)}/{len(tasks)} пакетов {elapsed()}")
+        pkg_from = chunk_start // 3 + 1
+        pkg_to = min((chunk_start + len(chunk) * 3 - 1) // 3 + 1, len(tasks))
+        add(f"  [ФИО] Пакеты {pkg_from}-{pkg_to}/{len(tasks)} | изменено: {fio_changed} {elapsed()}")
     
     cache.rebuild()
     wb.save(result_file)
-    add(f"ФИО нормализованы {elapsed()}")
+    add(f"  ИТОГО ФИО: обработано {len(fio_values)}, изменено {fio_changed} {elapsed()}")
 
-    # ==================== БЫСТРЫЙ ПОДСЧЁТ ====================
-    add(f"Анализ: без даты={len(cache.no_date_items)}, без номера={len(cache.no_phone_items)}, "
-        f"СНИЛС без даты={len(cache.snils_no_date)}, без даты с номером={len(cache.phones_no_date)} {elapsed()}")
+    # ==================== СТАТУС ПЕРЕД ПРОБИВОМ ====================
+    add(f"=== СТАТУС ПЕРЕД ПРОБИВОМ ===")
+    add(f"  Всего строк:     {ws.max_row - 1}")
+    add(f"  Без даты:         {len(cache.no_date_items)}")
+    add(f"  Без номера:       {len(cache.no_phone_items)}")
+    add(f"  СНИЛС без даты:   {len(cache.snils_no_date)}")
+    add(f"  Без даты (номер): {len(cache.phones_no_date)}")
+    add(f"  {elapsed()}")
 
     # ============ ЭТАП 1: ФИО+НОМЕР -> БОТ1 ============
     if cache.no_date_items and not stop_requested:
         items = [(r, d) for r, d in cache.no_date_items]
         cid = f"s1_{int(time.time())}"
-        add(f"ЭТАП 1: ФИО+НОМЕР -> бот1 ({len(items)} строк) {elapsed()}")
+        add(f"=== ЭТАП 1: ФИО+НОМЕР -> бот1 ===")
+        add(f"  Строк к пробиву: {len(items)}")
         
         result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 1: ФИО+НОМЕР", len(items), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
         if result == "skip":
-            add("[v] ЭТАП 1 ПРОПУЩЕН")
+            add("  [v] ПРОПУЩЕН")
         elif result == "confirm":
-            # Оптимизация: не очищаем бот если не нужно
             txt = "\n".join([f"{normalize_fio_local(d['fio'])}\t{clean_phone(d['phone'])}" for _, d in items])
             tpath = os.path.join(TEMP_DIR, f"t1_{int(time.time())}.txt")
             with open(tpath, 'w', encoding='utf-8') as f:
                 f.write(txt)
             
+            add(f"  TXT: {len(items)} строк, {len(txt)} байт")
             await clear_bot(client, bot1)
             e = await client.get_entity(bot1)
             await client.send_message(e, "Пробивы")
@@ -1539,20 +1562,22 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             last_msgs = await client.get_messages(e, limit=1)
             last_msg_id = last_msgs[0].id if last_msgs else 0
             await client.send_file(e, tpath)
-            add("Файл отправлен в бот1, жду ответ...")
+            add("  Файл отправлен в бот1, ожидание XLSX...")
             
+            before_empty = len(cache.no_date_items)
             msg = await wait_xlsx(client, bot1, 180, since_msg_id=last_msg_id)
             if msg:
                 rpath = os.path.join(TEMP_DIR, f"r1_{int(time.time())}.xlsx")
                 await client.download_media(msg, file=rpath)
                 recs = parse_xlsx(rpath)
-                add(f"Получено ответов: {len(recs)} {elapsed()}")
-                fill_dates_from_response(ws, recs)
+                filled = fill_dates_from_response(ws, recs)
                 wb.save(result_file)
                 cache.rebuild()
+                after_empty = len(cache.no_date_items)
+                add(f"  Ответов: {len(recs)} | Заполнено дат: {filled} | Осталось без даты: {after_empty} (было {before_empty}) {elapsed()}")
                 await send_status("этап 1")
             else:
-                add("[!] Бот1 не ответил на этапе 1")
+                add("  [!] Бот1 не ответил")
     
     if stop_requested:
         await send_final_zip()
@@ -1562,22 +1587,24 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     snils_list = cache.snils_no_date
     if snils_list and not stop_requested:
         cid = f"s23_{int(time.time())}"
-        add(f"ЭТАП 2+3: СНИЛС -> бот1+бот2 параллельно ({len(snils_list)} снилс) {elapsed()}")
+        add(f"=== ЭТАП 2+3: СНИЛС -> бот1+бот2 (параллельно) ===")
+        add(f"  Уникальных СНИЛС: {len(snils_list)}")
         
         result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 2+3: СНИЛС (оба бота)", len(snils_list), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
         if result == "skip":
-            add("[v] ЭТАП 2+3 ПРОПУЩЕН")
+            add("  [v] ПРОПУЩЕН")
         elif result == "confirm":
             txt = "\n".join(snils_list)
             tpath = os.path.join(TEMP_DIR, f"t23_{int(time.time())}.txt")
             with open(tpath, 'w', encoding='utf-8') as f:
                 f.write(txt)
             
+            before_empty = len(cache.snils_no_date)
+            
             async def probev_bot1_snils():
-                """СНИЛС через бот1"""
                 try:
                     await clear_bot(client, bot1)
                     e1 = await client.get_entity(bot1)
@@ -1589,7 +1616,6 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                     last_msgs = await client.get_messages(e1, limit=1)
                     last_msg_id = last_msgs[0].id if last_msgs else 0
                     await client.send_file(e1, tpath)
-                    add("СНИЛС отправлены в бот1...")
                     
                     msg = await wait_xlsx(client, bot1, 180, since_msg_id=last_msg_id)
                     if msg:
@@ -1598,17 +1624,15 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                         return parse_xlsx(rpath)
                     return []
                 except Exception as e:
-                    add(f"[БОТ1 СНИЛС] Ошибка: {e}")
+                    add(f"  [БОТ1 СНИЛС] Ошибка: {e}")
                     return []
             
             async def probev_bot2_snils():
-                """СНИЛС через бот2"""
                 try:
                     e2 = await client.get_entity(bot2)
                     last_msgs = await client.get_messages(e2, limit=1)
                     last_msg_id = last_msgs[0].id if last_msgs else 0
                     await client.send_file(e2, tpath)
-                    add("СНИЛС отправлены в бот2...")
                     
                     msg = await wait_xlsx(client, bot2, 180, since_msg_id=last_msg_id)
                     if msg:
@@ -1617,17 +1641,20 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                         return parse_xlsx(rpath)
                     return []
                 except Exception as e:
-                    add(f"[БОТ2 СНИЛС] Ошибка: {e}")
+                    add(f"  [БОТ2 СНИЛС] Ошибка: {e}")
                     return []
             
             # ПАРАЛЛЕЛЬНЫЙ запуск обоих ботов
+            add("  Запуск бот1 + бот2 одновременно...")
             recs1, recs2 = await asyncio.gather(probev_bot1_snils(), probev_bot2_snils())
-            add(f"Бот1 СНИЛС: {len(recs1)} ответов, Бот2 СНИЛС: {len(recs2)} ответов {elapsed()}")
             
-            fill_snils_dates(ws, recs1)
-            fill_snils_dates(ws, recs2)
+            f1 = fill_snils_dates(ws, recs1)
+            f2 = fill_snils_dates(ws, recs2)
             wb.save(result_file)
             cache.rebuild()
+            after_empty = len(cache.snils_no_date)
+            add(f"  Бот1: ответов {len(recs1)}, заполнено дат {f1} | Бот2: ответов {len(recs2)}, заполнено дат {f2}")
+            add(f"  СНИЛС без даты: было {before_empty} -> стало {after_empty} {elapsed()}")
             await send_status("этап 2+3")
     
     if stop_requested:
@@ -1638,14 +1665,15 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     phones_for_probev = cache.phones_no_date
     if phones_for_probev and not stop_requested:
         cid = f"s35_{int(time.time())}"
-        add(f"ЭТАП 3.5: ПРОБИВ ПО НОМЕРУ -> бот2 ({len(phones_for_probev)} номеров) {elapsed()}")
+        add(f"=== ЭТАП 3.5: ПРОБИВ ПО НОМЕРУ -> бот2 ===")
+        add(f"  Номеров без даты: {len(phones_for_probev)}")
         
         result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 3.5: ПРОБИВ ПО НОМЕРУ", len(phones_for_probev), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
         if result == "skip":
-            add("[v] ЭТАП 3.5 ПРОПУЩЕН")
+            add("  [v] ПРОПУЩЕН")
         elif result == "confirm":
             txt_lines = []
             for _, phone in phones_for_probev:
@@ -1658,24 +1686,26 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             with open(tpath, 'w', encoding='utf-8') as f:
                 f.write(txt_content)
             
+            before_empty = len(cache.phones_no_date)
             e = await client.get_entity(bot2)
             last_msgs = await client.get_messages(e, limit=1)
             last_msg_id = last_msgs[0].id if last_msgs else 0
             await client.send_file(e, tpath)
-            add("Номера отправлены в бот2, жду ответ...")
+            add(f"  TXT отправлен в бот2 ({len(txt_lines)} номеров), ожидание XLSX...")
             
             msg = await wait_xlsx(client, bot2, 180, since_msg_id=last_msg_id)
             if msg:
                 rpath = os.path.join(TEMP_DIR, f"r35_{int(time.time())}.xlsx")
                 await client.download_media(msg, file=rpath)
                 recs = parse_xlsx(rpath)
-                add(f"Получено по номерам: {len(recs)} {elapsed()}")
-                fill_dates_from_response(ws, recs)
+                filled = fill_dates_from_response(ws, recs)
                 wb.save(result_file)
                 cache.rebuild()
+                after_empty = len(cache.phones_no_date)
+                add(f"  Ответов: {len(recs)} | Заполнено дат: {filled} | Осталось без даты: {after_empty} (было {before_empty}) {elapsed()}")
                 await send_status("этап 3.5")
             else:
-                add("[!] Бот2 не ответил на этапе 3.5")
+                add("  [!] Бот2 не ответил")
     
     if stop_requested:
         await send_final_zip()
@@ -1685,19 +1715,22 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     no_phone_items = [(r, d) for r, d in cache.no_phone_items]
     if no_phone_items and not stop_requested:
         cid = f"s56_{int(time.time())}"
-        add(f"ЭТАП 5+6: ФИО+ДАТА -> бот1+бот2 параллельно ({len(no_phone_items)} строк) {elapsed()}")
+        add(f"=== ЭТАП 5+6: ФИО+ДАТА -> бот1+бот2 (параллельно) ===")
+        add(f"  Строк без номера: {len(no_phone_items)}")
         
         result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 5+6: ФИО+ДАТА (оба бота)", len(no_phone_items), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
         if result == "skip":
-            add("[v] ЭТАП 5+6 ПРОПУЩЕН")
+            add("  [v] ПРОПУЩЕН")
         elif result == "confirm":
             txt = "\n".join([f"{normalize_fio_local(d['fio'])}\t{d['date']}" for _, d in no_phone_items])
             tpath = os.path.join(TEMP_DIR, f"t56_{int(time.time())}.txt")
             with open(tpath, 'w', encoding='utf-8') as f:
                 f.write(txt)
+            
+            before_empty = len(cache.no_phone_items)
             
             async def probev_bot1_fio_date():
                 try:
@@ -1711,7 +1744,6 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                     last_msgs = await client.get_messages(e1, limit=1)
                     last_msg_id = last_msgs[0].id if last_msgs else 0
                     await client.send_file(e1, tpath)
-                    add("ФИО+дата отправлены в бот1...")
                     
                     msg = await wait_xlsx(client, bot1, 180, since_msg_id=last_msg_id)
                     if msg:
@@ -1720,7 +1752,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                         return parse_xlsx(rpath)
                     return []
                 except Exception as e:
-                    add(f"[БОТ1 ФИО+ДАТА] Ошибка: {e}")
+                    add(f"  [БОТ1 ФИО+ДАТА] Ошибка: {e}")
                     return []
             
             async def probev_bot2_fio_date():
@@ -1729,7 +1761,6 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                     last_msgs = await client.get_messages(e2, limit=1)
                     last_msg_id = last_msgs[0].id if last_msgs else 0
                     await client.send_file(e2, tpath)
-                    add("ФИО+дата отправлены в бот2...")
                     
                     msg = await wait_xlsx(client, bot2, 180, since_msg_id=last_msg_id)
                     if msg:
@@ -1738,17 +1769,19 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                         return parse_xlsx(rpath)
                     return []
                 except Exception as e:
-                    add(f"[БОТ2 ФИО+ДАТА] Ошибка: {e}")
+                    add(f"  [БОТ2 ФИО+ДАТА] Ошибка: {e}")
                     return []
             
-            # ПАРАЛЛЕЛЬНЫЙ запуск
+            add("  Запуск бот1 + бот2 одновременно...")
             recs1, recs2 = await asyncio.gather(probev_bot1_fio_date(), probev_bot2_fio_date())
-            add(f"Бот1 ФИО+дата: {len(recs1)} ответов, Бот2 ФИО+дата: {len(recs2)} ответов {elapsed()}")
             
-            fill_phones_from_response(ws, recs1)
-            fill_phones_from_response(ws, recs2)
+            f1 = fill_phones_from_response(ws, recs1)
+            f2 = fill_phones_from_response(ws, recs2)
             wb.save(result_file)
             cache.rebuild()
+            after_empty = len(cache.no_phone_items)
+            add(f"  Бот1: ответов {len(recs1)}, заполнено номеров {f1} | Бот2: ответов {len(recs2)}, заполнено номеров {f2}")
+            add(f"  Без номера: было {before_empty} -> стало {after_empty} {elapsed()}")
             await send_status("этап 5+6")
     
     if stop_requested:
@@ -1759,17 +1792,17 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     no_phone_final = [(r, d) for r, d in cache.no_phone_items]
     if no_phone_final and not stop_requested:
         cid = f"s7_{int(time.time())}"
-        add(f"ЭТАП 7: ДОБИВ САУРОН -> бот2 ({len(no_phone_final)} строк) {elapsed()}")
+        add(f"=== ЭТАП 7: ДОБИВ САУРОН -> бот2 ===")
+        add(f"  Строк без номера: {len(no_phone_final)}")
         
         result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 7: ДОБИВ САУРОН", len(no_phone_final), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
         if result == "skip":
-            add("[v] ЭТАП 7 ПРОПУЩЕН")
+            add("  [v] ПРОПУЩЕН")
         elif result == "confirm":
             e = await client.get_entity(bot2)
-            # Собираем уникальные ФИО+дата для пакетной отправки
             queries = []
             seen = set()
             for row_num, d in no_phone_final:
@@ -1780,7 +1813,9 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                     seen.add(key)
                     queries.append((row_num, fio, date))
             
-            # Отправляем пакетами по 10
+            add(f"  Уникальных запросов: {len(queries)} (пакетами по 10)")
+            phones_filled = 0
+            
             for batch_start in range(0, len(queries), 10):
                 if stop_requested:
                     break
@@ -1791,12 +1826,10 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                     await client.send_message(e, batch_txt)
                     await asyncio.sleep(3)
                     
-                    # Ищем ответы
                     async for msg in client.iter_messages(e, limit=5):
                         if msg.text and ("ОТЧЕТ" in msg.text or "ТЕЛЕФОНЫ" in msg.text):
                             phones = extract_phones_from_text(msg.text)
                             if phones:
-                                # Заполняем все строки с этим ФИО+датой
                                 for _, fio, date in batch:
                                     for row in range(2, ws.max_row + 1):
                                         table_fio = normalize_fio_local(str(ws.cell(row=row, column=COL_FIO).value or ""))
@@ -1805,19 +1838,22 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                                             existing = str(ws.cell(row=row, column=COL_PHONE).value or "").strip()
                                             if not existing or existing == 'None':
                                                 ws.cell(row=row, column=COL_PHONE).value = phones[0]
+                                                phones_filled += 1
                             break
                     
-                    add(f"[ДОБИВ] Пакет {batch_start//10 + 1}/{(len(queries)+9)//10}: {len(batch)} запросов {elapsed()}")
+                    pkg = batch_start // 10 + 1
+                    total_pkgs = (len(queries) + 9) // 10
+                    add(f"  [ДОБИВ] Пакет {pkg}/{total_pkgs}: {len(batch)} запросов, всего заполнено: {phones_filled} {elapsed()}")
                 except FloodWaitError as e:
-                    add(f"[ДОБИВ] FloodWait: {e.seconds}с")
+                    add(f"  [ДОБИВ] FloodWait: {e.seconds}с")
                     await asyncio.sleep(e.seconds)
                 except Exception as e:
-                    add(f"[ДОБИВ] Ошибка: {e}")
+                    add(f"  [ДОБИВ] Ошибка: {e}")
             
             wb.save(result_file)
             cache.rebuild()
+            add(f"  ИТОГО ДОБИВ: заполнено номеров {phones_filled} {elapsed()}")
             await send_status("этап 7")
-            add(f"Добив завершён {elapsed()}")
     
     if stop_requested:
         await send_final_zip()
@@ -1944,6 +1980,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         add(f"Адреса нормализованы {elapsed()}")
 
     # ============ ФИНАЛ ============
+    add(f"=== ФИНАЛ ===")
     # Отправляем TXT для чека максов
     await send_txt_for_max_check()
     
@@ -1955,190 +1992,43 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             rows_no_date.append(row)
     
     if rows_no_date:
-        add(f"[ОЧИСТКА] Удаляю {len(rows_no_date)} строк без даты {elapsed()}")
+        add(f"  Удалено строк без даты: {len(rows_no_date)}")
         for row in reversed(rows_no_date):
             ws.delete_rows(row)
         wb.save(result_file)
+    else:
+        add(f"  Все строки с датами — очистка не нужна")
     
     # Финальный ZIP
     await send_final_zip()
     
+    # Итоговая статистика
     total_dates = 0
     total_phones = 0
+    total_snils = 0
+    total_addrs = 0
     for row in range(2, ws.max_row + 1):
-        if str(ws.cell(row=row, column=COL_DATE).value or "").strip():
+        if str(ws.cell(row=row, column=COL_DATE).value or "").strip() not in ('', 'None', '0'):
             total_dates += 1
-        if str(ws.cell(row=row, column=COL_PHONE).value or "").strip():
+        if str(ws.cell(row=row, column=COL_PHONE).value or "").strip() not in ('', 'None', '0'):
             total_phones += 1
+        if str(ws.cell(row=row, column=COL_SNILS).value or "").strip() not in ('', 'None', '0'):
+            total_snils += 1
+        if str(ws.cell(row=row, column=COL_ADDR).value or "").strip() not in ('', 'None'):
+            total_addrs += 1
     
-    add(f"=== ГОТОВО: строк={ws.max_row-1}, дат={total_dates}, номеров={total_phones}, время={elapsed()} ===")
-    return {"ok": True, "log": log, "stopped": stop_requested}
-
-
-# ============ ЭТАП 8: ДОБИВ КВАРТИР (ГЛУБОКАЯ ИНТЕГРАЦИЯ) ============
-    # Этап 8a: Собираем все адреса — и с квартирами, и без
-    all_addresses = []
-    addresses_with_apt = []  # Адреса, где уже есть квартира (примеры)
-    addresses_without_apt = []  # Адреса без квартиры
-    rows_without_apartment = []
+    final_rows = ws.max_row - 1
+    date_pct = round(total_dates / final_rows * 100, 1) if final_rows else 0
+    phone_pct = round(total_phones / final_rows * 100, 1) if final_rows else 0
     
-    for row in range(2, ws.max_row + 1):
-        addr_val = str(ws.cell(row=row, column=COL_ADDR).value or "").strip()
-        if not addr_val or addr_val == 'None':
-            continue
-        
-        has_apt = bool(re.search(r',\s*\d+\s*$', addr_val))
-        addr_normalized = normalize_address_local(addr_val)
-        
-        if has_apt:
-            if addr_normalized not in addresses_with_apt:
-                addresses_with_apt.append(addr_normalized)
-        else:
-            phone_val = str(ws.cell(row=row, column=COL_PHONE).value or "").strip()
-            if phone_val and phone_val != 'None' and phone_val != '0':
-                if addr_normalized not in addresses_without_apt:
-                    addresses_without_apt.append(addr_normalized)
-                rows_without_apartment.append({
-                    'row': row,
-                    'address': addr_val,
-                    'address_normalized': addr_normalized,
-                    'phone': clean_phone(phone_val)
-                })
-
-    if rows_without_apartment and not stop_requested:
-        cid = f"s8_{int(time.time())}"
-        add(f"ЭТАП 8: ДОБИВ КВАРТИР ({len(rows_without_apartment)} адресов без кв, {len(addresses_with_apt)} с кв для примера)")
-
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 8: ДОБИВ КВАРТИР", len(rows_without_apartment), cid, add, topic_id)
-        if result == "stop":
-            await send_final_zip()
-            return {"ok": True, "log": log, "stopped": True}
-        if result == "skip":
-            add("[v] ЭТАП 8 ПРОПУЩЕН")
-        elif result == "confirm":
-            add("[v] ПОДТВЕРЖДЕНО! Начинаю добив квартир...")
-
-            e = await client.get_entity(bot2)
-            address_to_apartment = {}
-            
-            # Этап 8a: Пробив номеров через бот2 для получения адресов с квартирами
-            unique_phones = list(set([item['phone'] for item in rows_without_apartment]))
-            add(f"[ДОБИВ-КВАРТИР] Уникальных номеров для пробива: {len(unique_phones)}")
-            
-            probed_addresses = []  # Адреса, полученные из отчётов
-            
-            for i, phone in enumerate(unique_phones):
-                if stop_requested:
-                    break
-                
-                try:
-                    # Добавляем 7 при отправке в бот
-                    phone_for_send = clean_phone_without_plus(phone)
-                    if not phone_for_send.startswith('7'):
-                        phone_for_send = '7' + phone_for_send
-                    
-                    add(f"[ДОБИВ-КВАРТИР] Пробив номера: {phone_for_send}")
-                    
-                    report = await dobiv_by_numbers(client, e, phone, add)
-                    
-                    if report:
-                        # Сохраняем отчёт в файл с именем, содержащим номер
-                        report_filename = f"report_{phone_for_send}.txt"
-                        report_path = os.path.join(TEMP_DIR, report_filename)
-                        with open(report_path, 'w', encoding='utf-8') as f:
-                            f.write(report)
-                        
-                        # Отправляем отчёт в бот
-                        await send_file_to_bot(bot_token, chat_id, report_path, f"Отчёт по номеру {phone_for_send}", topic_id)
-                        
-                        # Извлекаем адрес из отчёта
-                        report_addr = extract_address_from_report(report)
-                        if report_addr:
-                            normalized = normalize_address_local(report_addr)
-                            # Проверяем, есть ли квартира
-                            if re.search(r',\s*\d+\s*$', normalized):
-                                if normalized not in probed_addresses:
-                                    probed_addresses.append(normalized)
-                                    add(f"[ДОБИВ-КВАРТИР] Найден адрес с кв: {normalized}")
-                            elif normalized not in probed_addresses:
-                                probed_addresses.append(normalized)
-                    
-                    if (i + 1) % 5 == 0:
-                        add(f"[ДОБИВ-КВАРТИР] Пробито {i+1}/{len(unique_phones)} номеров")
-                        await asyncio.sleep(2)
-                        
-                except FloodWaitError as e:
-                    add(f"[ДОБИВ-КВАРТИР] FloodWait: {e.seconds}с")
-                    await asyncio.sleep(e.seconds)
-                except Exception as e:
-                    add(f"[ДОБИВ-КВАРТИР] Ошибка пробива {phone}: {e}")
-            
-            # Этап 8b: Сопоставление адресов через DeepSeek
-            all_examples = list(set(addresses_with_apt + probed_addresses))
-            add(f"[ДОБИВ-КВАРТИР] Примеров адресов с кв: {len(all_examples)}")
-            add(f"[ДОБИВ-КВАРТИР] Адресов без кв: {len(addresses_without_apt)}")
-            
-            if addresses_without_apt and all_examples:
-                add("[ДОБИВ-КВАРТИР] Запуск DeepSeek для сопоставления адресов...")
-                apt_map = await find_apartments_via_deepseek(addresses_without_apt, all_examples)
-                
-                if apt_map:
-                    # Заполняем квартиры в таблице
-                    for item in rows_without_apartment:
-                        addr_norm = item.get('address_normalized', '')
-                        if addr_norm in apt_map:
-                            apartment = apt_map[addr_norm]
-                            row = item['row']
-                            current_addr = str(ws.cell(row=row, column=COL_ADDR).value or "").strip()
-                            # Добавляем квартиру после запятой
-                            ws.cell(row=row, column=COL_ADDR).value = f"{current_addr.rstrip(',')}, {apartment}"
-                            address_to_apartment[current_addr] = apartment
-                            add(f"[ДОБИВ-КВАРТИР] Строка {row}: +кв {apartment} -> {current_addr}, {apartment}")
-                    
-                    wb.save(result_file)
-                    await send_status("этап 8 (добив квартир)")
-                    add(f"[ДОБИВ-КВАРТИР] Заполнено квартир через DeepSeek: {len(apt_map)}")
-                else:
-                    add("[ДОБИВ-КВАРТИР] DeepSeek не нашёл совпадений")
-            else:
-                add("[ДОБИВ-КВАРТИР] Недостаточно данных для сопоставления")
-
-    if stop_requested:
-        await send_final_zip()
-        return {"ok": True, "log": log, "stopped": True}
-
-    # === ОТПРАВЛЯЕМ TXT ДЛЯ ЧЕКА МАКСОВ ===
-    await send_txt_for_max_check()
-
-    # === УДАЛЯЕМ СТРОКИ БЕЗ ДАТЫ ===
-    rows_no_date = []
-    for row in range(2, ws.max_row + 1):
-        date_val = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
-        if not date_val or date_val == 'None' or date_val == '0':
-            rows_no_date.append(row)
-    
-    if rows_no_date:
-        add(f"[ОЧИСТКА] Удаляю {len(rows_no_date)} строк без даты")
-        for row in reversed(rows_no_date):
-            ws.delete_rows(row)
-        wb.save(result_file)
-        add(f"Осталось: {ws.max_row - 1} строк")
-
-    # === ФИНАЛ ===
-    add("=== ВСЕ ЭТАПЫ ЗАВЕРШЕНЫ ===")
-    
-    # Отправляем финальный ZIP
-    await send_final_zip()
-    
-    total_dates = 0
-    total_phones = 0
-    for row in range(2, ws.max_row + 1):
-        if str(ws.cell(row=row, column=COL_DATE).value or "").strip():
-            total_dates += 1
-        if str(ws.cell(row=row, column=COL_PHONE).value or "").strip():
-            total_phones += 1
-    add(f"Итого: строк={ws.max_row-1}, с датами={total_dates}, с номерами={total_phones}")
-
+    add(f"=== ИТОГОВАЯ СТАТИСТИКА ===")
+    add(f"  Строк всего:        {final_rows}")
+    add(f"  С датами:           {total_dates} ({date_pct}%)")
+    add(f"  С номерами:         {total_phones} ({phone_pct}%)")
+    add(f"  Со СНИЛС:           {total_snils}")
+    add(f"  С адресами:         {total_addrs}")
+    add(f"  Общее время:        {elapsed()}")
+    add(f"=== ГОТОВО ===")
     return {"ok": True, "log": log, "stopped": stop_requested}
 
 
