@@ -411,21 +411,24 @@ def parse_xlsx(path):
 
         print(f"[PARSE] Найдены заголовки: {h}")
 
-        # Читаем строки
+        # Читаем строки — каждая в своём try/except, одна битая не ломает всё
         for row in range(2, ws.max_row + 1):
-            r = {}
-            if 'fio' in h:
-                r['fio'] = normalize_fio(ws.cell(row=row, column=h['fio']).value)
-            if 'date' in h:
-                r['date'] = parse_date(ws.cell(row=row, column=h['date']).value)
-            if 'phone' in h:
-                r['phone'] = clean_phone(ws.cell(row=row, column=h['phone']).value)
-            if 'snils' in h:
-                r['snils'] = clean_snils(ws.cell(row=row, column=h['snils']).value)
+            try:
+                r = {}
+                if 'fio' in h:
+                    r['fio'] = normalize_fio(ws.cell(row=row, column=h['fio']).value)
+                if 'date' in h:
+                    r['date'] = parse_date(ws.cell(row=row, column=h['date']).value)
+                if 'phone' in h:
+                    r['phone'] = clean_phone(ws.cell(row=row, column=h['phone']).value)
+                if 'snils' in h:
+                    r['snils'] = clean_snils(ws.cell(row=row, column=h['snils']).value)
 
-            # Добавляем только если есть хоть что-то
-            if any(v for v in r.values() if v):
-                res.append(r)
+                # Добавляем только если есть хоть что-то
+                if any(v for v in r.values() if v):
+                    res.append(r)
+            except Exception as row_err:
+                print(f"[PARSE] Ошибка в строке {row}: {row_err}")
 
         print(f"[PARSE] Всего записей: {len(res)}")
         if res:
@@ -543,40 +546,48 @@ def fill_phones_from_response(ws, response_records):
 
 def fill_snils_dates(ws, response_records):
     """
-    Заполняет ДАТЫ (колонка C) по совпадению СНИЛС (колонка E).
+    Заполняет ДАТЫ (колонка C). Сначала по СНИЛС, если нет — по ФИО.
     """
     filled = 0
-    print(f"[FILL-SNILS] Начинаю заполнение дат через СНИЛС. Ответов: {len(response_records)}")
+    print(f"[FILL-SNILS] Начинаю заполнение дат. Ответов: {len(response_records)}")
     for rec in response_records:
         rec_snils = clean_snils(rec.get('snils', ''))
+        rec_fio = normalize_fio(rec.get('fio', ''))
         rec_date = rec.get('date', '')
-        if not rec_date or not rec_snils or len(rec_snils) < 11:
-            print(f"[FILL-SNILS]   Пропуск (нет даты или СНИЛС): snils={rec_snils}, date={rec_date}")
+        if not rec_date:
             continue
 
         found = False
-        for row in range(2, ws.max_row + 1):
-            table_snils = clean_snils(str(ws.cell(row=row, column=COL_SNILS).value or ""))
-            existing_date = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
+        # Попытка 1: сопоставление по СНИЛС
+        if rec_snils and len(rec_snils) >= 11:
+            for row in range(2, ws.max_row + 1):
+                table_snils = clean_snils(str(ws.cell(row=row, column=COL_SNILS).value or ""))
+                if table_snils == rec_snils:
+                    existing = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
+                    if not existing or existing == 'None':
+                        ws.cell(row=row, column=COL_DATE).value = rec_date
+                        filled += 1
+                        print(f"[FILL-SNILS]   Строка {row}: СНИЛС={table_snils} -> дата={rec_date}")
+                    found = True
+                    break
 
-            if table_snils == rec_snils:
-                if not existing_date or existing_date == 'None':
-                    ws.cell(row=row, column=COL_DATE).value = rec_date
-                    filled += 1
-                    print(f"[FILL-SNILS]   Строка {row}: ЗАПОЛНЕНО! snils={table_snils} -> date={rec_date}")
-                else:
-                    print(f"[FILL-SNILS]   Строка {row}: дата уже есть '{existing_date}', пропуск")
-                found = True
-                break
+        # Попытка 2: fallback по ФИО (бот2 не возвращает СНИЛС)
+        if not found and rec_fio:
+            for row in range(2, ws.max_row + 1):
+                table_fio = normalize_fio(str(ws.cell(row=row, column=COL_FIO).value or ""))
+                if table_fio == rec_fio:
+                    existing = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
+                    if not existing or existing == 'None':
+                        ws.cell(row=row, column=COL_DATE).value = rec_date
+                        filled += 1
+                        print(f"[FILL-SNILS]   Строка {row}: ФИО={table_fio} -> дата={rec_date}")
+                    found = True
+                    break
 
         if not found:
-            print(f"[FILL-SNILS]   НЕ НАЙДЕНО: snils={rec_snils}, date={rec_date}")
-            sample = []
-            for row in range(2, min(ws.max_row + 1, 7)):
-                sample.append(clean_snils(str(ws.cell(row=row, column=COL_SNILS).value or "")))
-            print(f"[FILL-SNILS]   СНИЛС в таблице (первые 5): {sample}")
+            print(f"[FILL-SNILS]   НЕ НАЙДЕНО: fio={rec_fio}, snils={rec_snils}, date={rec_date}")
 
-    print(f"[FILL-SNILS] ИТОГО заполнено дат через СНИЛС: {filled}")
+    print(f"[FILL-SNILS] ИТОГО заполнено дат: {filled}")
     return filled
 
 
