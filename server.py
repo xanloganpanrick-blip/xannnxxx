@@ -1583,14 +1583,14 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ ЭТАП 2+3 ПАРАЛЛЕЛЬНО: СНИЛС -> БОТ1 + БОТ2 ============
+    # ============ ЭТАП 2: СНИЛС -> БОТ1 ============
     snils_list = cache.snils_no_date
     if snils_list and not stop_requested:
-        cid = f"s23_{int(time.time())}"
-        add(f"=== ЭТАП 2+3: СНИЛС -> бот1+бот2 (параллельно) ===")
+        cid = f"s2_{int(time.time())}"
+        add(f"=== ЭТАП 2: СНИЛС -> бот1 ===")
         add(f"  Уникальных СНИЛС: {len(snils_list)}")
         
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 2+3: СНИЛС (оба бота)", len(snils_list), cid, add, topic_id)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 2: СНИЛС (бот1)", len(snils_list), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
@@ -1598,64 +1598,82 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             add("  [v] ПРОПУЩЕН")
         elif result == "confirm":
             txt = "\n".join(snils_list)
-            tpath = os.path.join(TEMP_DIR, f"t23_{int(time.time())}.txt")
+            tpath = os.path.join(TEMP_DIR, f"t2_{int(time.time())}.txt")
             with open(tpath, 'w', encoding='utf-8') as f:
                 f.write(txt)
             
             before_empty = len(cache.snils_no_date)
             
-            async def probev_bot1_snils():
-                try:
-                    await clear_bot(client, bot1)
-                    e1 = await client.get_entity(bot1)
-                    await client.send_message(e1, "Пробивы")
-                    await asyncio.sleep(1)
-                    await click_btn(client, bot1, "СНИЛС")
-                    await asyncio.sleep(1)
-                    
-                    last_msgs = await client.get_messages(e1, limit=1)
-                    last_msg_id = last_msgs[0].id if last_msgs else 0
-                    await client.send_file(e1, tpath)
-                    
-                    msg = await wait_xlsx(client, bot1, 180, since_msg_id=last_msg_id)
-                    if msg:
-                        rpath = os.path.join(TEMP_DIR, f"r2_{int(time.time())}.xlsx")
-                        await client.download_media(msg, file=rpath)
-                        return parse_xlsx(rpath)
-                    return []
-                except Exception as e:
-                    add(f"  [БОТ1 СНИЛС] Ошибка: {e}")
-                    return []
+            await clear_bot(client, bot1)
+            e1 = await client.get_entity(bot1)
+            await client.send_message(e1, "Пробивы")
+            await asyncio.sleep(1)
+            await click_btn(client, bot1, "СНИЛС")
+            await asyncio.sleep(1)
             
-            async def probev_bot2_snils():
-                try:
-                    e2 = await client.get_entity(bot2)
-                    last_msgs = await client.get_messages(e2, limit=1)
-                    last_msg_id = last_msgs[0].id if last_msgs else 0
-                    await client.send_file(e2, tpath)
-                    
-                    msg = await wait_xlsx(client, bot2, 180, since_msg_id=last_msg_id)
-                    if msg:
-                        rpath = os.path.join(TEMP_DIR, f"r3_{int(time.time())}.xlsx")
-                        await client.download_media(msg, file=rpath)
-                        return parse_xlsx(rpath)
-                    return []
-                except Exception as e:
-                    add(f"  [БОТ2 СНИЛС] Ошибка: {e}")
-                    return []
+            last_msgs = await client.get_messages(e1, limit=1)
+            last_msg_id = last_msgs[0].id if last_msgs else 0
+            await client.send_file(e1, tpath)
+            add(f"  TXT отправлен в бот1 ({len(snils_list)} СНИЛС), ожидание XLSX...")
             
-            # ПАРАЛЛЕЛЬНЫЙ запуск обоих ботов
-            add("  Запуск бот1 + бот2 одновременно...")
-            recs1, recs2 = await asyncio.gather(probev_bot1_snils(), probev_bot2_snils())
+            msg = await wait_xlsx(client, bot1, 180, since_msg_id=last_msg_id)
+            if msg:
+                rpath = os.path.join(TEMP_DIR, f"r2_{int(time.time())}.xlsx")
+                await client.download_media(msg, file=rpath)
+                recs = parse_xlsx(rpath)
+                filled = fill_snils_dates(ws, recs)
+                wb.save(result_file)
+                cache.rebuild()
+                after_empty = len(cache.snils_no_date)
+                add(f"  Ответов: {len(recs)} | Заполнено дат: {filled} | СНИЛС без даты: было {before_empty} -> стало {after_empty} {elapsed()}")
+                await send_status("этап 2")
+            else:
+                add("  [!] Бот1 не ответил")
+    
+    if stop_requested:
+        await send_final_zip()
+        return {"ok": True, "log": log, "stopped": True}
+
+    # ============ ЭТАП 3: ОСТАВШИЕСЯ СНИЛС -> БОТ2 (добивка) ============
+    snils_remaining = cache.snils_no_date
+    if snils_remaining and not stop_requested:
+        cid = f"s3_{int(time.time())}"
+        add(f"=== ЭТАП 3: СНИЛС (добивка) -> бот2 ===")
+        add(f"  Осталось СНИЛС без даты: {len(snils_remaining)}")
+        
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 3: СНИЛС добивка (бот2)", len(snils_remaining), cid, add, topic_id)
+        if result == "stop":
+            await send_final_zip()
+            return {"ok": True, "log": log, "stopped": True}
+        if result == "skip":
+            add("  [v] ПРОПУЩЕН")
+        elif result == "confirm":
+            txt = "\n".join(snils_remaining)
+            tpath = os.path.join(TEMP_DIR, f"t3_{int(time.time())}.txt")
+            with open(tpath, 'w', encoding='utf-8') as f:
+                f.write(txt)
             
-            f1 = fill_snils_dates(ws, recs1)
-            f2 = fill_snils_dates(ws, recs2)
-            wb.save(result_file)
-            cache.rebuild()
-            after_empty = len(cache.snils_no_date)
-            add(f"  Бот1: ответов {len(recs1)}, заполнено дат {f1} | Бот2: ответов {len(recs2)}, заполнено дат {f2}")
-            add(f"  СНИЛС без даты: было {before_empty} -> стало {after_empty} {elapsed()}")
-            await send_status("этап 2+3")
+            before_empty = len(cache.snils_no_date)
+            
+            e2 = await client.get_entity(bot2)
+            last_msgs = await client.get_messages(e2, limit=1)
+            last_msg_id = last_msgs[0].id if last_msgs else 0
+            await client.send_file(e2, tpath)
+            add(f"  TXT отправлен в бот2 ({len(snils_remaining)} СНИЛС), ожидание XLSX...")
+            
+            msg = await wait_xlsx(client, bot2, 180, since_msg_id=last_msg_id)
+            if msg:
+                rpath = os.path.join(TEMP_DIR, f"r3_{int(time.time())}.xlsx")
+                await client.download_media(msg, file=rpath)
+                recs = parse_xlsx(rpath)
+                filled = fill_snils_dates(ws, recs)
+                wb.save(result_file)
+                cache.rebuild()
+                after_empty = len(cache.snils_no_date)
+                add(f"  Ответов: {len(recs)} | Заполнено дат: {filled} | СНИЛС без даты: было {before_empty} -> стало {after_empty} {elapsed()}")
+                await send_status("этап 3")
+            else:
+                add("  [!] Бот2 не ответил")
     
     if stop_requested:
         await send_final_zip()
@@ -1711,14 +1729,14 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ ЭТАП 5+6 ПАРАЛЛЕЛЬНО: ФИО+ДАТА -> БОТ1 + БОТ2 ============
+    # ============ ЭТАП 5: ФИО+ДАТА -> БОТ1 ============
     no_phone_items = [(r, d) for r, d in cache.no_phone_items]
     if no_phone_items and not stop_requested:
-        cid = f"s56_{int(time.time())}"
-        add(f"=== ЭТАП 5+6: ФИО+ДАТА -> бот1+бот2 (параллельно) ===")
+        cid = f"s5_{int(time.time())}"
+        add(f"=== ЭТАП 5: ФИО+ДАТА -> бот1 ===")
         add(f"  Строк без номера: {len(no_phone_items)}")
         
-        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 5+6: ФИО+ДАТА (оба бота)", len(no_phone_items), cid, add, topic_id)
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 5: ФИО+ДАТА (бот1)", len(no_phone_items), cid, add, topic_id)
         if result == "stop":
             await send_final_zip()
             return {"ok": True, "log": log, "stopped": True}
@@ -1726,69 +1744,88 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             add("  [v] ПРОПУЩЕН")
         elif result == "confirm":
             txt = "\n".join([f"{normalize_fio_local(d['fio'])}\t{d['date']}" for _, d in no_phone_items])
-            tpath = os.path.join(TEMP_DIR, f"t56_{int(time.time())}.txt")
+            tpath = os.path.join(TEMP_DIR, f"t5_{int(time.time())}.txt")
             with open(tpath, 'w', encoding='utf-8') as f:
                 f.write(txt)
             
             before_empty = len(cache.no_phone_items)
             
-            async def probev_bot1_fio_date():
-                try:
-                    await clear_bot(client, bot1)
-                    e1 = await client.get_entity(bot1)
-                    await client.send_message(e1, "Пробивы")
-                    await asyncio.sleep(1)
-                    await click_btn(client, bot1, "ФИО+дата")
-                    await asyncio.sleep(1)
-                    
-                    last_msgs = await client.get_messages(e1, limit=1)
-                    last_msg_id = last_msgs[0].id if last_msgs else 0
-                    await client.send_file(e1, tpath)
-                    
-                    msg = await wait_xlsx(client, bot1, 180, since_msg_id=last_msg_id)
-                    if msg:
-                        rpath = os.path.join(TEMP_DIR, f"r5_{int(time.time())}.xlsx")
-                        await client.download_media(msg, file=rpath)
-                        return parse_xlsx(rpath)
-                    return []
-                except Exception as e:
-                    add(f"  [БОТ1 ФИО+ДАТА] Ошибка: {e}")
-                    return []
+            await clear_bot(client, bot1)
+            e1 = await client.get_entity(bot1)
+            await client.send_message(e1, "Пробивы")
+            await asyncio.sleep(1)
+            await click_btn(client, bot1, "ФИО+дата")
+            await asyncio.sleep(1)
             
-            async def probev_bot2_fio_date():
-                try:
-                    e2 = await client.get_entity(bot2)
-                    last_msgs = await client.get_messages(e2, limit=1)
-                    last_msg_id = last_msgs[0].id if last_msgs else 0
-                    await client.send_file(e2, tpath)
-                    
-                    msg = await wait_xlsx(client, bot2, 180, since_msg_id=last_msg_id)
-                    if msg:
-                        rpath = os.path.join(TEMP_DIR, f"r6_{int(time.time())}.xlsx")
-                        await client.download_media(msg, file=rpath)
-                        return parse_xlsx(rpath)
-                    return []
-                except Exception as e:
-                    add(f"  [БОТ2 ФИО+ДАТА] Ошибка: {e}")
-                    return []
+            last_msgs = await client.get_messages(e1, limit=1)
+            last_msg_id = last_msgs[0].id if last_msgs else 0
+            await client.send_file(e1, tpath)
+            add(f"  TXT отправлен в бот1 ({len(no_phone_items)} строк), ожидание XLSX...")
             
-            add("  Запуск бот1 + бот2 одновременно...")
-            recs1, recs2 = await asyncio.gather(probev_bot1_fio_date(), probev_bot2_fio_date())
-            
-            f1 = fill_phones_from_response(ws, recs1)
-            f2 = fill_phones_from_response(ws, recs2)
-            wb.save(result_file)
-            cache.rebuild()
-            after_empty = len(cache.no_phone_items)
-            add(f"  Бот1: ответов {len(recs1)}, заполнено номеров {f1} | Бот2: ответов {len(recs2)}, заполнено номеров {f2}")
-            add(f"  Без номера: было {before_empty} -> стало {after_empty} {elapsed()}")
-            await send_status("этап 5+6")
+            msg = await wait_xlsx(client, bot1, 180, since_msg_id=last_msg_id)
+            if msg:
+                rpath = os.path.join(TEMP_DIR, f"r5_{int(time.time())}.xlsx")
+                await client.download_media(msg, file=rpath)
+                recs = parse_xlsx(rpath)
+                filled = fill_phones_from_response(ws, recs)
+                wb.save(result_file)
+                cache.rebuild()
+                after_empty = len(cache.no_phone_items)
+                add(f"  Ответов: {len(recs)} | Заполнено номеров: {filled} | Без номера: было {before_empty} -> стало {after_empty} {elapsed()}")
+                await send_status("этап 5")
+            else:
+                add("  [!] Бот1 не ответил")
     
     if stop_requested:
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ ЭТАП 7: ДОБИВ САУРОН -> БОТ2 (оптимизированный) ============
+    # ============ ЭТАП 6: ОСТАВШИЕСЯ ФИО+ДАТА -> БОТ2 (добивка) ============
+    no_phone_remaining = [(r, d) for r, d in cache.no_phone_items]
+    if no_phone_remaining and not stop_requested:
+        cid = f"s6_{int(time.time())}"
+        add(f"=== ЭТАП 6: ФИО+ДАТА (добивка) -> бот2 ===")
+        add(f"  Осталось без номера: {len(no_phone_remaining)}")
+        
+        result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 6: ФИО+ДАТА добивка (бот2)", len(no_phone_remaining), cid, add, topic_id)
+        if result == "stop":
+            await send_final_zip()
+            return {"ok": True, "log": log, "stopped": True}
+        if result == "skip":
+            add("  [v] ПРОПУЩЕН")
+        elif result == "confirm":
+            txt = "\n".join([f"{normalize_fio_local(d['fio'])}\t{d['date']}" for _, d in no_phone_remaining])
+            tpath = os.path.join(TEMP_DIR, f"t6_{int(time.time())}.txt")
+            with open(tpath, 'w', encoding='utf-8') as f:
+                f.write(txt)
+            
+            before_empty = len(cache.no_phone_items)
+            
+            e2 = await client.get_entity(bot2)
+            last_msgs = await client.get_messages(e2, limit=1)
+            last_msg_id = last_msgs[0].id if last_msgs else 0
+            await client.send_file(e2, tpath)
+            add(f"  TXT отправлен в бот2 ({len(no_phone_remaining)} строк), ожидание XLSX...")
+            
+            msg = await wait_xlsx(client, bot2, 180, since_msg_id=last_msg_id)
+            if msg:
+                rpath = os.path.join(TEMP_DIR, f"r6_{int(time.time())}.xlsx")
+                await client.download_media(msg, file=rpath)
+                recs = parse_xlsx(rpath)
+                filled = fill_phones_from_response(ws, recs)
+                wb.save(result_file)
+                cache.rebuild()
+                after_empty = len(cache.no_phone_items)
+                add(f"  Ответов: {len(recs)} | Заполнено номеров: {filled} | Без номера: было {before_empty} -> стало {after_empty} {elapsed()}")
+                await send_status("этап 6")
+            else:
+                add("  [!] Бот2 не ответил")
+    
+    if stop_requested:
+        await send_final_zip()
+        return {"ok": True, "log": log, "stopped": True}
+
+    # ============ ЭТАП 7: ДОБИВ САУРОН -> БОТ2 ============
     no_phone_final = [(r, d) for r, d in cache.no_phone_items]
     if no_phone_final and not stop_requested:
         cid = f"s7_{int(time.time())}"
