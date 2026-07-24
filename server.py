@@ -68,11 +68,9 @@ PATRONYMIC_FIXES = {
     'СЕРГЕЕВНА': 'СЕРГЕЕВНА',    # правильно
 }
 
-# Мусорные «имена» (колонки-заголовки, placeholder'ы)
-GARBAGE_NAMES = {'ИФО', 'ФОИ', 'ОИФ', 'ФИО', 'FIO', 'ИМЯ', 'NAME', 'ФАМИЛИЯ',
-                 'ИМЯО', 'ОТЧЕСТВО', 'ФАМ', 'ИМ', 'ОТ', '-', '--', '...',
-                 'НЕТ', 'НЕТУ', 'НЕИЗВЕСТНО', 'НЕИЗВЕСТЕН', 'НЕИЗВЕСТНА',
-                 'UNKNOWN', 'NULL', 'NONE', 'NAN', 'XXX', 'ХХХ'}
+# Явно мусорные значения (placeholder'ы, а не имена)
+GARBAGE_NAMES = {'NULL', 'NONE', 'NAN', 'XXX', 'ХХХ', '-', '--', '...', '•••',
+                 'НЕТ', 'НЕТУ', 'НЕИЗВЕСТНО', 'НЕИЗВЕСТЕН', 'НЕИЗВЕСТНА', 'UNKNOWN'}
 
 # Слова-маркеры для удаления (оглы/кызы и др.)
 REMOVE_MARKERS = {'ОГЛЫ', 'ОГЛИ', 'КЫЗЫ', 'КИЗИ', 'УГЛИ', 'УЛЫ', 'ГЫЗЫ'}
@@ -103,30 +101,35 @@ def validate_and_clean_fio(raw):
         if len(part) == 1 and part not in ('Я', 'И', 'А', 'У', 'О', 'Е'):
             return "", f"одна буква в ФИО: {fio}"
 
-    # Проверка на оглы/кызы
+    # Проверка на оглы/кызы — только это удаляем безусловно
     for part in parts:
         if part in REMOVE_MARKERS:
             return "", f"содержит {part}: {fio}"
 
-    # Проверка на перемешанные буквы (ифо/фои и т.п.) — только если имя подозрительно короткое
-    total_len = len(fio.replace(' ', ''))
-    if total_len <= 2 and len(parts) == 1:
-        return "", f"подозрительно короткое: {fio}"
-
-    # Исправление опечаток в отчествах
+    # Исправление перемешанных букв ФИО: ИФО/ФОИ/ОИФ/ИОФ → ФИО
     fixed_parts = []
     for part in parts:
-        if part in PATRONYMIC_FIXES:
-            fixed_parts.append(PATRONYMIC_FIXES[part])
-        # Общий паттерн: ОЕВИЧ → ОВИЧ, ОЕВНА → ОВНА
-        elif 'ОЕВИЧ' in part:
-            fixed_parts.append(part.replace('ОЕВИЧ', 'ОВИЧ'))
-        elif 'ОЕВНА' in part:
-            fixed_parts.append(part.replace('ОЕВНА', 'ОВНА'))
+        if set(part) == {'Ф', 'И', 'О'} and len(part) == 3:
+            fixed_parts.append('ФИО')
+        elif set(part) == {'Ф', 'И'} and len(part) == 2:
+            fixed_parts.append('ФИ')
         else:
             fixed_parts.append(part)
 
-    fio = ' '.join(fixed_parts)
+    # Исправление опечаток в отчествах
+    final_parts = []
+    for part in fixed_parts:
+        if part in PATRONYMIC_FIXES:
+            final_parts.append(PATRONYMIC_FIXES[part])
+        # Общий паттерн: ОЕВИЧ → ОВИЧ, ОЕВНА → ОВНА
+        elif 'ОЕВИЧ' in part:
+            final_parts.append(part.replace('ОЕВИЧ', 'ОВИЧ'))
+        elif 'ОЕВНА' in part:
+            final_parts.append(part.replace('ОЕВНА', 'ОВНА'))
+        else:
+            final_parts.append(part)
+
+    fio = ' '.join(final_parts)
     return fio, None
 
 
