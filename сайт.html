@@ -92,7 +92,19 @@
         .file-list { margin-top: 8px; max-height: 80px; overflow-y: auto; font-size: 11px; color: #666; }
         .file-list .file-item { padding: 2px 0; }
         .hidden { display: none !important; }
-        @media (max-width: 768px) { .sidebar { width: 50px; padding: 10px 4px; } .sidebar .logo { font-size: 16px; text-align: center; margin-bottom: 16px; } .nav-btn { font-size: 9px; text-align: center; padding: 8px 2px; } .main { margin-left: 50px; padding: 12px; max-width: calc(100% - 50px); } .split-col { grid-template-columns: 1fr; } }
+        @media (max-width: 768px) { 
+            .sidebar { width: 50px; padding: 10px 4px; } 
+            .sidebar .logo { font-size: 16px; text-align: center; margin-bottom: 16px; } 
+            .nav-btn { font-size: 9px; text-align: center; padding: 8px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } 
+            .main { margin-left: 50px; padding: 12px; max-width: calc(100% - 50px); } 
+            .split-col { grid-template-columns: 1fr; } 
+            .flex { flex-wrap: wrap; } 
+            .modal-box { width: 95vw !important; max-height: 85vh; } 
+            .table-preview { font-size: 9px; } 
+            .table-preview td, .table-preview th { padding: 2px 4px; font-size: 9px; } 
+            .card { padding: 12px 14px; } 
+            .title { font-size: 20px; } 
+        }
     </style>
 </head>
 <body>
@@ -105,6 +117,8 @@
         <button class="nav-btn" data-page="probiv">Пробивы</button>
         <button class="nav-btn" data-page="checker">Чекер</button>
         <button class="nav-btn" data-page="dobiv">Добив</button>
+        <button class="nav-btn" data-page="cloud">Облако</button>
+        <button class="nav-btn" data-page="auth">Вход</button>
         <button class="nav-btn" data-page="server">Сервер</button>
         <button class="nav-btn" data-page="merge">Объединить</button>
         <button class="nav-btn" data-page="addrs">Адреса</button>
@@ -215,44 +229,10 @@
                 <div class="flex mt-8">
                     <button class="btn-white" id="btnProbiv" onclick="startProbiv()">ЗАПУСТИТЬ ПРОБИВ</button>
                     <button class="btn-red" id="btnStopProbiv" onclick="stopProbiv()" disabled>ОСТАНОВИТЬ</button>
+                    <button class="btn-yellow" id="btnPauseProbiv" onclick="pauseProbiv()" disabled>ПАУЗА</button>
                 </div>
                 <div class="text-xs mt-8" style="color:#666;">
                     Файлы будут переименованы по адресу: ИНН_Адрес.xlsx или УК_Адрес.xlsx
-                </div>
-            </div>
-
-            <!-- ПЛАШКА: Завершение сессии (3 шага) -->
-            <div class="card" id="sessionCard" style="display:none;">
-                <h3>Завершение сессии</h3>
-                
-                <!-- Шаг 1: Скачать TXT -->
-                <div id="stepEnd1">
-                    <div class="step"><div class="step-num active">1</div><div>
-                        <p class="text-sm">Скачайте TXT с номерами для проверки максов</p>
-                        <button class="btn-dark btn-sm mt-8" id="btnDownloadCheckTxt2" onclick="downloadCheckTxt()" disabled>Скачать TXT (чекать максы)</button>
-                    </div></div>
-                </div>
-
-                <!-- Шаг 2: Загрузить TXT с Номер Имя -->
-                <div id="stepEnd2" style="display:none;">
-                    <div class="step"><div class="step-num">2</div><div>
-                        <p class="text-sm">Загрузите TXT файл где каждая строка: <b>Номер Имя</b> (без +7)</p>
-                        <div class="flex mt-8">
-                            <button class="btn-dark btn-sm" onclick="document.getElementById('dobiTxtInput').click()">Загрузить TXT</button>
-                            <button class="btn-yellow btn-sm" id="btnFilterByTxt" onclick="filterByUploadedTxt()" disabled>Запустить фильтрацию</button>
-                        </div>
-                        <input type="file" id="dobiTxtInput" accept=".txt" style="display:none" onchange="loadDobivTxt(event)">
-                        <div id="dobiTxtInfo" class="text-sm mt-8"></div>
-                        <div id="filterResult" class="text-sm mt-8"></div>
-                    </div></div>
-                </div>
-
-                <!-- Шаг 3: Завершить и скачать ZIP -->
-                <div id="stepEnd3" style="display:none;">
-                    <div class="step"><div class="step-num">3</div><div>
-                        <p class="text-sm">Завершите сессию — каждая база будет названа <b>ИНН_Адрес.xlsx</b> или <b>УК_Адрес.xlsx</b></p>
-                        <button class="btn-white mt-8" id="btnFinishSession" onclick="finishSessionAndDownload()">Завершить и скачать ZIP</button>
-                    </div></div>
                 </div>
             </div>
 
@@ -262,6 +242,46 @@
                 <div class="flex mt-8">
                     <button class="btn-dark btn-sm" onclick="document.getElementById('pLog').innerHTML='<span class="dim">Очищено.</span>'">Очистить лог</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- ========== ОБЛАКО ========== -->
+        <div class="page" id="page-cloud">
+            <div class="title">Облако</div>
+            <div class="subtitle">Файловое хранилище на базе Telegram</div>
+            <div class="card">
+                <div class="flex-between mb-8">
+                    <h3 id="cloudPathLabel">/</h3>
+                    <div class="flex">
+                        <button class="btn-dark btn-sm" onclick="cloudMkdir()">+ Папка</button>
+                        <button class="btn-dark btn-sm" onclick="document.getElementById('cloudFileInput').click()">+ Файл</button>
+                        <input type="file" id="cloudFileInput" style="display:none" onchange="cloudUpload(event)">
+                    </div>
+                </div>
+                <div id="cloudItems" class="table-preview" style="max-height:400px;overflow:auto;">
+                    <p class="text-sm">Войдите в аккаунт для доступа к облаку</p>
+                </div>
+            </div>
+            <div class="card">
+                <h3>Корзина</h3>
+                <p class="text-sm mb-8">Удалённые файлы хранятся 30 дней</p>
+                <div id="trashItems"><p class="text-sm dim">Пусто</p></div>
+            </div>
+        </div>
+
+        <!-- ========== АВТОРИЗАЦИЯ ========== -->
+        <div class="page" id="page-auth">
+            <div class="title">Вход / Регистрация</div>
+            <div class="subtitle">Доступ к облачному хранилищу</div>
+            <div class="card">
+                <h3>Вход</h3>
+                <input type="text" id="authLogin" placeholder="Логин">
+                <input type="password" id="authPassword" placeholder="Пароль">
+                <div class="flex">
+                    <button class="btn-white" onclick="doLogin()">Войти</button>
+                    <button class="btn-dark" onclick="doRegister()">Регистрация</button>
+                </div>
+                <div id="authResult" class="text-sm mt-8"></div>
             </div>
         </div>
 
@@ -388,6 +408,32 @@
             <p class="green mb-8">Аккаунт добавлен!</p>
         </div>
         <button class="btn-dark btn-block mt-16" onclick="closeAccModal()">Закрыть</button>
+    </div>
+</div>
+
+<!-- MODAL: Завершение сессии (попап) -->
+<div class="modal" id="sessionEndModal">
+    <div class="modal-box" style="width:450px;">
+        <h3>Завершение сессии</h3>
+        <div id="sessionEndStep1">
+            <p class="text-sm mb-8">Скачайте TXT с номерами для проверки максов</p>
+            <div class="flex">
+                <button class="btn-dark" id="btnSessionDownloadTxt" onclick="sessionDownloadTxt()">Скачать TXT</button>
+                <button class="btn-white" id="btnSessionFinish" onclick="sessionFinishZip()">Завершить и скачать ZIP</button>
+            </div>
+        </div>
+        <div id="sessionEndStep2" style="display:none;">
+            <p class="text-sm mb-8">Загрузите TXT файл с форматом <b>Номер Имя</b> для добива ФИО или проверки максов</p>
+            <div class="flex mb-8">
+                <button class="btn-dark btn-sm" onclick="document.getElementById('dobiTxtInput2').click()">Загрузить TXT</button>
+                <button class="btn-yellow btn-sm" id="btnFilterByTxt2" onclick="filterByUploadedTxt2()" disabled>Добить ФИО</button>
+            </div>
+            <input type="file" id="dobiTxtInput2" accept=".txt" style="display:none" onchange="loadDobivTxt2(event)">
+            <div id="dobiTxtInfo2" class="text-sm"></div>
+            <div id="filterResult2" class="text-sm"></div>
+            <button class="btn-white mt-8" style="display:none;" id="btnSessionFinish2" onclick="sessionFinishZip()">Завершить и скачать ZIP</button>
+        </div>
+        <button class="btn-dark btn-block mt-16" onclick="closeSessionModal()">Закрыть</button>
     </div>
 </div>
 
@@ -638,15 +684,10 @@ function clearUploads() {
     document.getElementById('tableStats').innerHTML = '';
     document.getElementById('tableNamesInfo').textContent = '';
     document.getElementById('fileInput').value = '';
-    document.getElementById('btnFinishSession').disabled = true;
-    document.getElementById('btnDownloadCheckTxt2').disabled = true;
-    document.getElementById('sessionCard').style.display = 'none';
-    document.getElementById('stepEnd2').style.display = 'none';
-    document.getElementById('stepEnd3').style.display = 'none';
-    document.getElementById('dobiTxtInfo').textContent = '';
-    document.getElementById('filterResult').innerHTML = '';
-    document.getElementById('btnFilterByTxt').disabled = true;
-    document.getElementById('btnFilterByTxt').textContent = 'Запустить фильтрацию';
+    closeSessionModal();
+    var el = document.getElementById('dobiTxtInfo'); if (el) el.textContent = '';
+    var el2 = document.getElementById('filterResult'); if (el2) el2.innerHTML = '';
+    var btnFt = document.getElementById('btnFilterByTxt'); if (btnFt) { btnFt.disabled = true; btnFt.textContent = 'Запустить фильтрацию'; }
 }
 
 function updateFileList() {
@@ -725,11 +766,7 @@ async function mergeUploaded() {
                 document.getElementById('uploadInfo').textContent = 'Объединено ' + data.tables_count + ' таблиц, ' + data.count + ' строк';
                 renderTablePreview();
                 refreshAccSelects();
-                document.getElementById('btnFinishSession').disabled = false;
-                document.getElementById('btnDownloadCheckTxt2').disabled = false;
-                document.getElementById('sessionCard').style.display = 'block';
-                document.getElementById('stepEnd2').style.display = 'none';
-                document.getElementById('stepEnd3').style.display = 'none';
+                showSessionModal();
                 toast('Объединено успешно!', true);
             } else {
                 toast('Ошибка: ' + (data.error || 'Неизвестно'), false);
@@ -788,11 +825,7 @@ async function mergeUploaded() {
             document.getElementById('uploadInfo').textContent = 'Объединено ' + allTables.length + ' таблиц, ' + allRows.length + ' строк';
             renderTablePreview();
             refreshAccSelects();
-            document.getElementById('btnFinishSession').disabled = false;
-            document.getElementById('btnDownloadCheckTxt2').disabled = false;
-            document.getElementById('sessionCard').style.display = 'block';
-            document.getElementById('stepEnd2').style.display = 'none';
-            document.getElementById('stepEnd3').style.display = 'none';
+            showSessionModal();
             toast('Объединено ' + allTables.length + ' таблиц!', true);
         } else {
             toast('Нет валидных XLSX или ZIP файлов', false);
@@ -999,8 +1032,9 @@ function filterByUploadedTxt() {
     addLog('[ФИЛЬТР TXT] Было ' + beforeCount + ' → осталось ' + kept.length + ' (удалено ' + deleted + ', заполнено ФИО ' + filled + ')', 'ok');
     
     // Показываем шаг 3
-    document.getElementById('stepEnd3').style.display = 'block';
-    document.getElementById('btnFinishSession').disabled = false;
+    var el = document.getElementById('btnSessionFinish2'); if (el) el.style.display = 'inline-block';
+    var finishBtn = document.getElementById('btnFinishSession');
+    if (finishBtn) finishBtn.disabled = false;
     document.getElementById('btnFilterByTxt').disabled = true;
     document.getElementById('btnFilterByTxt').textContent = 'Готово';
     
@@ -1042,7 +1076,7 @@ function downloadCheckTxt() {
     toast('Скачано ' + phones.length + ' номеров', true);
     
     // Показываем шаг 2
-    document.getElementById('stepEnd2').style.display = 'block';
+    showSessionModal();
 }
 
 async function startProbiv() {
@@ -1067,7 +1101,11 @@ async function startProbiv() {
     btn.disabled = true;
     btn.textContent = 'ВЫПОЛНЯЕТСЯ...';
     stopBtn.disabled = false;
-    document.getElementById('btnFinishSession').disabled = true;
+    document.getElementById('btnPauseProbiv').disabled = false;
+    document.getElementById('btnPauseProbiv').textContent = 'ПАУЗА';
+    document.getElementById('btnPauseProbiv').className = 'btn-yellow btn-sm';
+    var finishBtn = document.getElementById('btnFinishSession');
+    if (finishBtn) finishBtn.disabled = true;
     
     var bot1 = document.getElementById('bot1').value.trim() || '@osint_pam_pam_bot';
     var bot2 = document.getElementById('bot2').value.trim() || '@proverim123_bot';
@@ -1153,11 +1191,7 @@ async function startProbiv() {
             addLog('[!] Отменено', 'err');
         } else {
             addLog('[v] Пробив завершён! ZIP архив отправлен в бот.', 'ok');
-            document.getElementById('btnFinishSession').disabled = false;
-            document.getElementById('btnDownloadCheckTxt2').disabled = false;
-            document.getElementById('sessionCard').style.display = 'block';
-            document.getElementById('stepEnd2').style.display = 'none';
-            document.getElementById('stepEnd3').style.display = 'none';
+            showSessionModal();
         }
     } catch(e) {
         addLog('[x] ОШИБКА: ' + e.message, 'err');
@@ -1175,6 +1209,8 @@ async function stopProbiv() {
         var srv = getServerUrl();
         await fetch(srv + '/stop', {method: 'POST'});
         addLog('[СТОП] Остановка запрошена', 'warn');
+        document.getElementById('btnPauseProbiv').disabled = true;
+        document.getElementById('btnPauseProbiv').textContent = 'ПАУЗА';
         toast('Остановка запрошена', true);
     } catch(e) {
         toast('Ошибка: ' + e.message, false);
@@ -1183,7 +1219,8 @@ async function stopProbiv() {
 
 async function finishSession() {
     addLog('[СЕССИЯ] Завершение...', 'info');
-    document.getElementById('btnFinishSession').disabled = true;
+    var finishBtn = document.getElementById('btnFinishSession');
+    if (finishBtn) finishBtn.disabled = true;
     
     try {
         var resp = await apiPost('/finish-session', {
@@ -1208,8 +1245,6 @@ async function finishSession() {
 async function finishSessionAndDownload() {
     if (!confirm('Завершить сессию и скачать ZIP с базами? Каждая база будет названа ИНН_Адрес или УК_Адрес.')) return;
     addLog('[СЕССИЯ] Завершение и запрос ZIP...', 'info');
-    document.getElementById('btnFinishSession').disabled = true;
-    document.getElementById('btnFinishSession').textContent = 'Формирую ZIP...';
     
     try {
         var srv = getServerUrl();
@@ -1247,8 +1282,6 @@ async function finishSessionAndDownload() {
     } catch(e) {
         addLog('[СЕССИЯ] Ошибка: ' + e.message, 'err');
         toast('Ошибка: ' + e.message, false);
-        document.getElementById('btnFinishSession').disabled = false;
-        document.getElementById('btnFinishSession').textContent = 'Завершить и скачать ZIP';
     }
 }
 
@@ -1702,6 +1735,292 @@ function downloadAddrResult() {
     XLSX.utils.book_append_sheet(wb, ws, 'Addresses');
     XLSX.writeFile(wb, 'addresses_normalized.xlsx');
     toast('Скачано!', true);
+}
+
+// ==================== ПАУЗА / РЕЗЮМЕ ====================
+async function pauseProbiv() {
+    var btn = document.getElementById('btnPauseProbiv');
+    if (btn.textContent === 'ПАУЗА') {
+        await apiPost('/pause', {});
+        btn.textContent = 'ПРОДОЛЖИТЬ';
+        btn.className = 'btn-green btn-sm';
+        addLog('[ПАУЗА] Пробив приостановлен', 'warn');
+    } else {
+        await apiPost('/resume', {});
+        btn.textContent = 'ПАУЗА';
+        btn.className = 'btn-yellow btn-sm';
+        addLog('[ПАУЗА] Пробив возобновлён', 'ok');
+    }
+}
+
+// ==================== СЕССИЯ: ПОПАП ====================
+function showSessionModal() {
+    document.getElementById('sessionEndModal').classList.add('active');
+    document.getElementById('sessionEndStep1').style.display = 'block';
+    document.getElementById('sessionEndStep2').style.display = 'none';
+}
+
+function closeSessionModal() {
+    document.getElementById('sessionEndModal').classList.remove('active');
+}
+
+function sessionDownloadTxt() {
+    downloadCheckTxt();
+    document.getElementById('sessionEndStep1').style.display = 'none';
+    document.getElementById('sessionEndStep2').style.display = 'block';
+    addLog('[СЕССИЯ] TXT скачан. Загрузите обратно TXT с Номер Имя или завершите сессию.', 'info');
+}
+
+async function sessionFinishZip() {
+    await finishSessionAndDownload();
+    closeSessionModal();
+}
+
+var _dobiTxtData2 = null;
+function loadDobivTxt2(event) {
+    var file = event.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+        _dobiTxtData2 = e.target.result;
+        document.getElementById('dobiTxtInfo2').textContent = 'Загружен: ' + file.name + ' (' + file.size + ' байт)';
+        document.getElementById('btnFilterByTxt2').disabled = false;
+    };
+    reader.readAsText(file);
+}
+
+async function filterByUploadedTxt2() {
+    if (!_dobiTxtData2) return toast('Сначала загрузите TXT', false);
+    
+    var btn = document.getElementById('btnFilterByTxt2');
+    btn.disabled = true;
+    btn.textContent = 'Обработка...';
+    
+    // Отправляем на сервер для заполнения MAX колонки и добива ФИО
+    try {
+        var resp = await fetch(getServerUrl() + '/upload-check-txt', {
+            method: 'POST',
+            body: (function() {
+                var fd = new FormData();
+                fd.append('file', new Blob([_dobiTxtData2], {type: 'text/plain'}), 'check_max_response.txt');
+                return fd;
+            })()
+        });
+        var data = await resp.json();
+        if (data.ok && data.phone_to_fio) {
+            // Заполняем MAX колонку
+            var maxResp = await apiPost('/fill-max', {
+                session: DB.accs[0] ? DB.accs[0].ss : '',
+                phone_names: data.phone_to_fio
+            });
+            if (maxResp.ok) {
+                addLog('[MAX] Заполнено: ' + maxResp.filled + ' из ' + maxResp.total, 'ok');
+                document.getElementById('filterResult2').innerHTML = 
+                    '<div class="ok">MAX колонка заполнена: ' + maxResp.filled + ' имён</div>';
+            }
+            document.getElementById('btnSessionFinish2').style.display = 'inline-block';
+            toast('Обработано! Можно завершить сессию.', true);
+        }
+    } catch(e) {
+        toast('Ошибка: ' + e.message, false);
+    }
+    btn.disabled = false;
+    btn.textContent = 'Добить ФИО';
+}
+
+// ==================== ОБЛАКО ====================
+var _cloudPath = '';
+var _cloudGroupId = '';
+
+async function cloudLoad() {
+    if (!_cloudGroupId) {
+        document.getElementById('cloudItems').innerHTML = '<p class="text-sm">Сначала войдите в аккаунт (вкладка Вход)</p>';
+        return;
+    }
+    try {
+        var resp = await apiPost('/cloud-list', {
+            session: DB.accs[0] ? DB.accs[0].ss : '',
+            group_id: _cloudGroupId,
+            path: _cloudPath
+        });
+        if (resp.ok) {
+            document.getElementById('cloudPathLabel').textContent = _cloudPath ? '/' + _cloudPath : '/';
+            var items = resp.items || [];
+            var html = '';
+            if (_cloudPath) {
+                html += '<div style="cursor:pointer;padding:4px 0;color:#6495ED;" onclick="cloudNavUp()">📁 .. (наверх)</div>';
+            }
+            for (var i = 0; i < items.length; i++) {
+                var item = items[i];
+                if (item.in_trash) continue;
+                var icon = item.type === 'folder' ? '📁' : '📄';
+                html += '<div class="list-item" oncontextmenu="cloudCtx(event,\'' + esc(item.name) + '\',' + item.msg_id + ')">' +
+                    '<div class="info"><span class="name">' + icon + ' ' + esc(item.name) + '</span>' +
+                    '<span class="phone">' + (item.size ? (item.size/1024).toFixed(1) + ' KB' : '') + '</span></div>' +
+                    '<button class="btn-dark btn-sm" onclick="cloudDownload(' + item.msg_id + ',\'' + esc(item.name) + '\')">Скачать</button>' +
+                    '<button class="btn-red btn-sm" onclick="cloudDelete(' + item.msg_id + ',\'' + esc(item.name) + '\')">Удалить</button>' +
+                    '</div>';
+            }
+            document.getElementById('cloudItems').innerHTML = html || '<p class="text-sm dim">Папка пуста</p>';
+        }
+    } catch(e) {
+        toast('Ошибка загрузки облака', false);
+    }
+}
+
+function cloudNavUp() {
+    var parts = _cloudPath.split('/');
+    parts.pop();
+    _cloudPath = parts.join('/');
+    cloudLoad();
+}
+
+function cloudCtx(e, name, msgId) {
+    e.preventDefault();
+    // Упрощённое контекстное меню
+    var menu = document.createElement('div');
+    menu.style.cssText = 'position:fixed;background:#0a0a0a;border:1px solid #1a1a1a;border-radius:6px;padding:4px;z-index:9999;min-width:120px;';
+    menu.innerHTML = 
+        '<button class="nav-btn" style="display:block;width:100%;" onclick="cloudDownload('+msgId+',\''+name+'\');document.body.removeChild(this.parentElement)">Скачать</button>' +
+        '<button class="nav-btn" style="display:block;width:100%;color:#ff4444;" onclick="cloudDelete('+msgId+',\''+name+'\');document.body.removeChild(this.parentElement)">Удалить</button>';
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    document.body.appendChild(menu);
+    setTimeout(function() { if (menu.parentElement) document.body.removeChild(menu); }, 5000);
+    document.addEventListener('click', function() { if (menu.parentElement) document.body.removeChild(menu); }, {once: true});
+}
+
+async function cloudDownload(msgId, name) {
+    try {
+        var resp = await apiPost('/cloud-download', {
+            session: DB.accs[0] ? DB.accs[0].ss : '',
+            group_id: _cloudGroupId,
+            msg_id: msgId
+        });
+        if (resp.ok) {
+            // Скачиваем файл
+            window.open(getServerUrl() + '/download/' + encodeURIComponent(resp.filepath.split('/').pop()), '_blank');
+            toast('Файл скачан: ' + name, true);
+            cloudLoad();
+        }
+    } catch(e) {
+        toast('Ошибка скачивания', false);
+    }
+}
+
+async function cloudDelete(msgId, name) {
+    if (!confirm('Удалить ' + name + '? (Будет в корзине 30 дней)')) return;
+    try {
+        var resp = await apiPost('/cloud-delete', {
+            session: DB.accs[0] ? DB.accs[0].ss : '',
+            group_id: _cloudGroupId,
+            path: _cloudPath,
+            filename: name,
+            msg_id: msgId
+        });
+        if (resp.ok) {
+            toast('Файл перемещён в корзину', true);
+            cloudLoad();
+        }
+    } catch(e) {
+        toast('Ошибка удаления', false);
+    }
+}
+
+function cloudUpload(event) {
+    var file = event.target.files[0];
+    if (!file) return;
+    
+    var fd = new FormData();
+    fd.append('session', DB.accs[0] ? DB.accs[0].ss : '');
+    fd.append('group_id', _cloudGroupId);
+    fd.append('path', _cloudPath);
+    fd.append('file', file);
+    
+    fetch(getServerUrl() + '/cloud-upload', { method: 'POST', body: fd })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.ok) {
+                toast('Файл загружен!', true);
+                cloudLoad();
+            } else {
+                toast(data.error || 'Ошибка', false);
+            }
+        })
+        .catch(function(e) { toast('Ошибка: ' + e.message, false); });
+}
+
+async function cloudMkdir() {
+    var name = prompt('Название папки:');
+    if (!name) return;
+    try {
+        var resp = await apiPost('/cloud-mkdir', {
+            session: DB.accs[0] ? DB.accs[0].ss : '',
+            group_id: _cloudGroupId,
+            path: _cloudPath,
+            folder_name: name
+        });
+        if (resp.ok) {
+            toast('Папка создана!', true);
+            cloudLoad();
+        }
+    } catch(e) {
+        toast('Ошибка создания папки', false);
+    }
+}
+
+// ==================== АВТОРИЗАЦИЯ ====================
+async function doLogin() {
+    var login = document.getElementById('authLogin').value.trim();
+    var password = document.getElementById('authPassword').value.trim();
+    if (!login || !password) return toast('Введите логин и пароль', false);
+    
+    try {
+        var resp = await apiPost('/login', {
+            session: DB.accs[0] ? DB.accs[0].ss : '',
+            login: login,
+            password: password
+        });
+        if (resp.ok) {
+            _cloudGroupId = resp.group_id;
+            document.getElementById('authResult').innerHTML = '<div class="ok">Вход выполнен! Group ID: ' + resp.group_id + '</div>';
+            toast('Вход выполнен!', true);
+            // Переключаемся на облако
+            document.querySelectorAll('.nav-btn').forEach(function(b) { b.classList.remove('active'); });
+            document.querySelector('[data-page="cloud"]').classList.add('active');
+            document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+            document.getElementById('page-cloud').classList.add('active');
+            cloudLoad();
+        } else {
+            document.getElementById('authResult').innerHTML = '<div class="red">' + resp.error + '</div>';
+        }
+    } catch(e) {
+        toast('Ошибка входа', false);
+    }
+}
+
+async function doRegister() {
+    var login = document.getElementById('authLogin').value.trim();
+    var password = document.getElementById('authPassword').value.trim();
+    if (!login || !password) return toast('Введите логин и пароль', false);
+    if (password.length < 4) return toast('Пароль должен быть не менее 4 символов', false);
+    
+    try {
+        var resp = await apiPost('/register', {
+            session: DB.accs[0] ? DB.accs[0].ss : '',
+            login: login,
+            password: password
+        });
+        if (resp.ok) {
+            _cloudGroupId = resp.group_id;
+            document.getElementById('authResult').innerHTML = '<div class="ok">Регистрация успешна! Group ID: ' + resp.group_id + '</div>';
+            toast('Регистрация успешна! Группа создана.', true);
+        } else {
+            document.getElementById('authResult').innerHTML = '<div class="red">' + resp.error + '</div>';
+        }
+    } catch(e) {
+        toast('Ошибка регистрации', false);
+    }
 }
 
 // ==================== ИНИЦИАЛИЗАЦИЯ ====================

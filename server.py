@@ -1,4 +1,4 @@
-# server.py - X Backend v17.0 (ОПТИМИЗАЦИЯ: ×10 быстрее, фильтр дат первый, кэш строк, параллельные боты, batch 200)
+# server.py - X Backend v18.0 (ПЕРЕРАБОТКА: построчный пробив, TXT-подход, облако, регистрация)
 # Установка: pip install aiohttp telethon openpyxl
 # Запуск: python server.py
 # Порт: 8765
@@ -18,6 +18,8 @@ from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError, FloodWaitError
 from telethon.sessions import StringSession
 from telethon.tl.types import DocumentAttributeFilename
+from telethon.tl.functions.messages import CreateChatRequest, MigrateChatRequest
+from telethon.tl.functions.channels import CreateForumTopicRequest, EditForumRequest
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import PatternFill
 
@@ -36,6 +38,7 @@ pending_confirms = {}
 active_probevs = {}
 probev_lock = asyncio.Lock()
 stop_requested = False
+pause_requested = False
 
 # ====================== MIDDLEWARE ======================
 @web.middleware
@@ -749,6 +752,367 @@ async def wait_report(client, bot, phone, timeout=300):
     return None
 
 
+# ====================== ДОБИВ ПО НОМЕРАМ (САУРОН) ======================
+async def dobiv_by_numbers(client, bot_entity, phone, add_log):
+    """Пробивает ОДИН номер через бота — последовательно, как в эталонном коде.
+    Отправляет номер, ждёт ответа с адресом."""
+    try:
+        await client.send_message(bot_entity, phone)
+        add_log(f"[САУРОН] Запрос номера: {phone}")
+        await asyncio.sleep(6)
+        
+        # Ищем ответ бота с адресом
+        async for msg in client.iter_messages(bot_entity, limit=15):
+            if not msg or not msg.text:
+                continue
+            # Проверяем что сообщение содержит отчёт по нашему номеру
+            if phone in msg.text and ("ОТЧЕТ" in msg.text.upper() or "ЗАПРОС" in msg.text.upper() or "АДРЕС" in msg.text.upper()):
+                add_log(f"[САУРОН] Ответ получен для {phone}")
+                return msg.text
+            # Альтернативно — ищем любой ответ с адресом
+            if "АДРЕС" in msg.text.upper() and len(msg.text) > 50:
+                return msg.text
+        add_log(f"[САУРОН] Нет ответа для {phone}")
+        return None
+    except FloodWaitError as e:
+        add_log(f"[САУРОН] FloodWait {e.seconds}с для {phone}")
+        await asyncio.sleep(e.seconds)
+        return None
+    except Exception as ex:
+        add_log(f"[САУРОН] Ошибка {phone}: {ex}")
+        return None
+
+
+async def dobiv_fio_date_line_by_line(client, bot_entity, fio_date_pairs, add_log):
+    """Этап 6: Отправляет ФИО+дата ПОСТРОЧНО (по 1 на строку) в TXT файле боту2.
+    Возвращает словарь {phone: (fio, date)} из ответного XLSX."""
+    import tempfile
+    results = {}
+    
+    if not fio_date_pairs:
+        return results
+    
+    # Создаём TXT: каждая строка — "ФИО Дата"
+    txt_lines = []
+    for fio, date in fio_date_pairs:
+        txt_lines.append(f"{fio} {date}")
+    
+    txt_content = "\n".join(txt_lines) + "\n"
+    txt_filename = f"s6_{int(time.time())}.txt"
+    txt_path = os.path.join(TEMP_DIR, txt_filename)
+    
+    with open(txt_path, 'w', encoding='utf-8') as f:
+        f.write(txt_content)
+    
+    add_log(f"[ЭТАП 6] TXT создан: {len(fio_date_pairs)} строк")
+    
+    # Отправляем TXT боту2
+    try:
+        await client.send_file(bot_entity, txt_path, caption="ФИО+Дата (построчно)")
+        add_log(f"[ЭТАП 6] TXT отправлен в бот2, ожидание XLSX...")
+    except Exception as e:
+        add_log(f"[ЭТАП 6] Ошибка отправки: {e}")
+        return results
+    
+    # Ждём XLSX ответ
+    msg = await wait_xlsx(client, bot_entity.username or str(bot_entity.id), timeout=300)
+    
+    if not msg:
+        add_log("[ЭТАП 6] XLSX не получен от бота2")
+        return results
+    
+    rpath = os.path.join(TEMP_DIR, f"r6_{int(time.time())}.xlsx")
+    await client.download_media(msg, file=rpath)
+    
+    # Парсим XLSX — ищем номера телефонов
+    try:
+        wb = load_workbook(rpath, data_only=True)
+        ws = wb.active
+        
+        # Определяем колонки
+        fio_col, phone_col = None, None
+        for c in range(1, ws.max_column + 1):
+            val = str(ws.cell(row=1, column=c).value or "").lower().strip()
+            if any(k in val for k in ['фио', 'fio', 'имя', 'фамилия', 'name']):
+                fio_col = c
+            if any(k in val for k in ['телефон', 'phone', 'номер', 'тел']):
+                phone_col = c
+        
+        for row in range(2, ws.max_row + 1):
+            fio_val = str(ws.cell(row=row, column=fio_col or 1).value or "").strip()
+            phone_val = str(ws.cell(row=row, column=phone_col or 2).value or "").strip()
+            phone_clean = clean_phone_without_plus(phone_val)
+            
+            if phone_clean and len(phone_clean) >= 10 and fio_val:
+                # Ищем соответствующую пару ФИО+дата из исходного списка
+                for orig_fio, orig_date in fio_date_pairs:
+                    if normalize_fio_local(orig_fio).lower() in normalize_fio_local(fio_val).lower():
+                        results[phone_clean] = (orig_fio, orig_date)
+                        break
+        
+        add_log(f"[ЭТАП 6] Извлечено номеров из XLSX: {len(results)}")
+    except Exception as e:
+        add_log(f"[ЭТАП 6] Ошибка парсинга XLSX: {e}")
+    
+    return results
+
+
+async def dobiv_sauron_sequential(client, bot_entity, fio_date_pairs, add_log, ws_ref, cache_ref, wb_ref, result_file_ref):
+    """Этап 7: Последовательный пробив через Саурон — как в эталонном коде.
+    Каждый запрос отправляется отдельно, ждём ответ, извлекаем телефон.
+    Сначала ФИО+Дата, если не найдено — пробив по СНИЛС/ИНН/Паспорт."""
+    filled = 0
+    
+    if not fio_date_pairs:
+        return filled
+    
+    add_log(f"[ЭТАП 7] Начало последовательного пробива: {len(fio_date_pairs)} запросов")
+    
+    for idx, (row_num, fio, date) in enumerate(fio_date_pairs):
+        if stop_requested:
+            break
+        
+        fio_norm = normalize_fio_local(fio)
+        query = f"{fio_norm} {date}"
+        
+        try:
+            # Отправляем запрос
+            await client.send_message(bot_entity, query)
+            
+            # Ждём ответ
+            await asyncio.sleep(6)
+            
+            # Ищем ответ с телефонами
+            phone_found = None
+            async for msg in client.iter_messages(bot_entity, limit=10):
+                if not msg or not msg.text:
+                    continue
+                
+                text_upper = msg.text.upper()
+                if "ОТЧЕТ" in text_upper or "ТЕЛЕФОНЫ" in text_upper or "ТЕЛЕФОН" in text_upper:
+                    phones = extract_phones_from_text(msg.text)
+                    if phones:
+                        phone_found = phones[0]
+                        break
+                    
+                    # Если нет прямых телефонов — ищем СНИЛС/ИНН/Паспорт для добива
+                    snils_match = re.search(r'\b\d{11}\b', msg.text)
+                    inn_match = re.search(r'\b\d{12}\b', msg.text)
+                    passport_match = re.search(r'\b\d{10}\b', msg.text)
+                    
+                    id_value = None
+                    id_type = None
+                    if snils_match:
+                        id_value = snils_match.group()
+                        id_type = "СНИЛС"
+                    elif inn_match:
+                        id_value = inn_match.group()
+                        id_type = "ИНН"
+                    elif passport_match:
+                        id_value = passport_match.group()
+                        id_type = "Паспорт"
+                    
+                    if id_value:
+                        add_log(f"[ЭТАП 7] Строка {idx+1}: Найден {id_type} {id_value}, добив...")
+                        await client.send_message(bot_entity, id_value)
+                        await asyncio.sleep(6)
+                        
+                        async for msg2 in client.iter_messages(bot_entity, limit=10):
+                            if msg2.text:
+                                phones2 = extract_phones_from_text(msg2.text)
+                                if phones2:
+                                    phone_found = phones2[0]
+                                    break
+                    break
+            
+            if phone_found:
+                # Заполняем номер в таблице
+                existing = str(ws_ref.cell(row=row_num, column=COL_PHONE).value or "").strip()
+                if not existing or existing == 'None' or existing == '0':
+                    ws_ref.cell(row=row_num, column=COL_PHONE).value = phone_found
+                    filled += 1
+                    wb_ref.save(result_file_ref)
+                    cache_ref.rebuild()
+                    add_log(f"[ЭТАП 7] Строка {row_num}: ЗАПОЛНЕН {phone_found}")
+            
+            if (idx + 1) % 5 == 0:
+                add_log(f"[ЭТАП 7] Прогресс: {idx + 1}/{len(fio_date_pairs)}, заполнено: {filled}")
+                
+        except FloodWaitError as e:
+            add_log(f"[ЭТАП 7] FloodWait {e.seconds}с")
+            await asyncio.sleep(e.seconds)
+        except Exception as ex:
+            add_log(f"[ЭТАП 7] Ошибка строки {row_num}: {ex}")
+            await asyncio.sleep(2)
+    
+    add_log(f"[ЭТАП 7] ИТОГО заполнено: {filled}")
+    return filled
+
+
+async def dobiv_apartments_via_txt(client, bot_entity, phones_list, add_log, ws_ref, cache_ref, wb_ref, result_file_ref):
+    """Этап 8: Пробив квартир через TXT. 
+    Все номера → TXT (1 номер на строку) → бот2 → TXT ответ → DeepSeek сопоставляет адреса."""
+    
+    if not phones_list:
+        add_log("[ЭТАП 8] Нет номеров для пробива квартир")
+        return 0
+    
+    # Создаём TXT с номерами (1 номер = 1 строка)
+    unique_phones = list(set([clean_phone_without_plus(p) for p in phones_list if p]))
+    txt_content = "\n".join(unique_phones) + "\n"
+    txt_path = os.path.join(TEMP_DIR, f"apt_{int(time.time())}.txt")
+    
+    with open(txt_path, 'w', encoding='utf-8') as f:
+        f.write(txt_content)
+    
+    add_log(f"[ЭТАП 8] TXT с номерами создан: {len(unique_phones)} номеров")
+    
+    try:
+        # Отправляем TXT боту2
+        last_msgs_before = await client.get_messages(bot_entity, limit=1)
+        last_msg_id = last_msgs_before[0].id if last_msgs_before else 0
+        
+        await client.send_file(bot_entity, txt_path, caption=f"Пробив квартир: {len(unique_phones)} номеров")
+        add_log("[ЭТАП 8] TXT отправлен в бот2, ожидание ответного TXT...")
+        
+        # Ждём TXT ответ от бота2
+        await asyncio.sleep(5)
+        response_text = None
+        
+        for attempt in range(30):  # до 5 минут
+            async for msg in client.iter_messages(bot_entity, limit=5):
+                if msg.id <= last_msg_id:
+                    continue
+                if msg.document:
+                    # Проверяем TXT или документ
+                    for attr in msg.document.attributes:
+                        if isinstance(attr, DocumentAttributeFilename):
+                            fname = attr.file_name.lower()
+                            if fname.endswith('.txt'):
+                                # Скачиваем TXT
+                                rpath = os.path.join(TEMP_DIR, f"apt_resp_{int(time.time())}.txt")
+                                await client.download_media(msg, file=rpath)
+                                with open(rpath, 'r', encoding='utf-8', errors='ignore') as rf:
+                                    response_text = rf.read()
+                                add_log(f"[ЭТАП 8] TXT ответ получен: {len(response_text)} символов")
+                                break
+                elif msg.text and len(msg.text) > 200:
+                    response_text = msg.text
+                    add_log(f"[ЭТАП 8] Текстовый ответ получен: {len(response_text)} символов")
+                    break
+            
+            if response_text:
+                break
+            await asyncio.sleep(10)
+        
+        if not response_text:
+            add_log("[ЭТАП 8] Ответ от бота2 не получен")
+            return 0
+        
+        # Парсим ответ: структура с разделителями ━━━━━━━
+        # Каждый блок между разделителями — информация по одному номеру
+        blocks = re.split(r'━{5,}', response_text)
+        add_log(f"[ЭТАП 8] Найдено блоков: {len(blocks)}")
+        
+        # Извлекаем адреса из блоков
+        phone_addresses = {}  # phone -> address
+        current_phone = None
+        
+        for block in blocks:
+            block = block.strip()
+            if not block:
+                continue
+            
+            # Ищем номер телефона в блоке
+            phone_match = re.search(r'(?:7)?(\d{10,11})', block)
+            if phone_match:
+                current_phone = phone_match.group(1)
+                if len(current_phone) == 10:
+                    current_phone = '7' + current_phone
+            
+            # Ищем адрес в блоке
+            addr_match = re.search(r'(?:Адрес|адрес|АДРЕС)[:\s]+([^\n]+)', block)
+            if not addr_match:
+                # Альтернативные паттерны
+                addr_match = re.search(r'(?:г\.|ул\.|д\.)\s*[^\n]+', block)
+            
+            if current_phone and addr_match:
+                address = addr_match.group(1) if addr_match.lastindex else addr_match.group(0)
+                address = address.strip()
+                phone_addresses[current_phone] = normalize_address_local(address)
+        
+        add_log(f"[ЭТАП 8] Адресов извлечено: {len(phone_addresses)}")
+        
+        # Собираем адреса с квартирами и без
+        addrs_with_apt = []
+        addrs_no_apt_items = []
+        
+        for r, d in cache_ref.rows.items():
+            addr = d['addr']
+            if not addr or addr == 'None':
+                continue
+            norm = normalize_address_local(addr)
+            if re.search(r',\s*\d+\s*$', addr):
+                if norm not in addrs_with_apt:
+                    addrs_with_apt.append(norm)
+            else:
+                phone = clean_phone(d['phone'])
+                if phone and phone != 'None' and phone != '0':
+                    addrs_no_apt_items.append({
+                        'row': r, 'address': addr,
+                        'address_normalized': norm, 'phone': phone
+                    })
+        
+        # Объединяем примеры из ответа и из таблицы
+        all_examples = list(set(addrs_with_apt + list(phone_addresses.values())))
+        targets = [item['address_normalized'] for item in addrs_no_apt_items]
+        
+        if targets and all_examples:
+            add_log(f"[ЭТАП 8] DeepSeek: {len(targets)} целей, {len(all_examples)} примеров")
+            apt_map = await find_apartments_via_deepseek(targets, all_examples)
+            
+            if apt_map:
+                filled_count = 0
+                for item in addrs_no_apt_items:
+                    norm = item['address_normalized']
+                    if norm in apt_map:
+                        apartment = apt_map[norm]
+                        row = item['row']
+                        current = str(ws_ref.cell(row=row, column=COL_ADDR).value or "").strip()
+                        new_addr = f"{current.rstrip(',')}, {apartment}"
+                        ws_ref.cell(row=row, column=COL_ADDR).value = new_addr
+                        filled_count += 1
+                    elif item['phone'] in phone_addresses:
+                        # Берём полный адрес из ответа
+                        full_addr = phone_addresses[item['phone']]
+                        # Извлекаем квартиру
+                        apt_match = re.search(r',\s*(\d+)\s*$', full_addr)
+                        if apt_match:
+                            row = item['row']
+                            current = str(ws_ref.cell(row=row, column=COL_ADDR).value or "").strip()
+                            new_addr = f"{current.rstrip(',')}, {apt_match.group(1)}"
+                            ws_ref.cell(row=row, column=COL_ADDR).value = new_addr
+                            filled_count += 1
+                        else:
+                            # Берём весь адрес и форматируем
+                            row = item['row']
+                            ws_ref.cell(row=row, column=COL_ADDR).value = full_addr
+                            filled_count += 1
+                
+                wb_ref.save(result_file_ref)
+                cache_ref.rebuild()
+                add_log(f"[ЭТАП 8] Заполнено адресов/квартир: {filled_count}")
+                return filled_count
+        
+        add_log("[ЭТАП 8] Совпадений не найдено")
+        return 0
+        
+    except Exception as e:
+        add_log(f"[ЭТАП 8] Ошибка: {e}")
+        traceback.print_exc()
+        return 0
+
+
 # ====================== ПАРСИНГ XLSX ======================
 def parse_xlsx(path):
     res = []
@@ -1035,8 +1399,9 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
                          items_no_date, items_no_phone, items_snils,
                          year_range, original_rows, tables_names=None, topic_id=None, group_id=None,
                          normalize_addresses=True):
-    global stop_requested
+    global stop_requested, pause_requested
     stop_requested = False
+    pause_requested = False
     
     client = await get_client(ss)
     log = []
@@ -1046,6 +1411,13 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         ts = datetime.now().strftime('%H:%M:%S')
         log.append(f"[{ts}] {msg}")
         print(f"[LOG] {msg}")
+
+    async def check_pause():
+        """Если пауза запрошена — ждём возобновления или остановки"""
+        global pause_requested, stop_requested
+        while pause_requested and not stop_requested:
+            await asyncio.sleep(1)
+        return stop_requested
 
     def elapsed():
         return f"({time.time() - t_start:.1f}с)"
@@ -1128,14 +1500,17 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             if phone_val and phone_val != 'None' and phone_val != '0':
                 clean = clean_phone_without_plus(phone_val)
                 if clean:
+                    # Удаляем ведущую 7 для чека максов
+                    if clean.startswith('7') and len(clean) == 11:
+                        clean = clean[1:]
                     phones.append(clean)
         
         if phones:
             phones = list(set(phones))
             content = '\n'.join(phones)
-            caption = "ЧЕК МАКСОВ — проверьте эти номера.\n\nДАЛЕЕ: отправьте TXT с форматом 'Номер Имя' для добива ФИО, или нажмите 'Завершить сессию' на сайте."
+            caption = "ЧЕК МАКСОВ — проверьте эти номера (без +7).\n\nДАЛЕЕ: отправьте TXT с форматом 'Номер Имя' для добива ФИО, или нажмите 'Завершить сессию' на сайте."
             await send_txt_to_bot(bot_token, chat_id, content, "check_max.txt", caption, topic_id)
-            add(f"[TXT] Отправлен check_max.txt с {len(phones)} номерами {elapsed()}")
+            add(f"[TXT] Отправлен check_max.txt с {len(phones)} номерами (без ведущей 7) {elapsed()}")
 
     # ==================== СОЗДАНИЕ ТАБЛИЦЫ + ФИЛЬТР ДАТ СРАЗУ ====================
     result_file = os.path.join(TEMP_DIR, f"result_{int(time.time())}.xlsx")
@@ -1152,25 +1527,30 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         except:
             pass
 
-    # ФИЛЬТР ДАТ НА СТАРТЕ — вырезаем строки с неподходящим годом ДО всей работы
+    # ФИЛЬТР ДАТ НА СТАРТЕ — вырезаем строки с неподходящим годом И без даты ДО всей работы
     rows_kept = 0
     rows_filtered = 0
+    rows_no_date_filtered = 0
     years_seen = {}
     for i, row in enumerate(original_rows):
         date_val = str(row[2] if len(row) > 2 else "").strip()  # COL_DATE = 2
         
+        # Если даты нет совсем — в мусор (Stage 11: Удаление строк без даты)
+        if not date_val or date_val == 'None' or date_val == '0':
+            rows_no_date_filtered += 1
+            continue
+        
         # Если дата есть — проверяем год
-        if date_val and date_val != 'None' and date_val != '0':
-            parts_d = date_val.split('.')
-            if len(parts_d) == 3:
-                try:
-                    year = int(parts_d[2])
-                    years_seen[year] = years_seen.get(year, 0) + 1
-                    if year < yf or year > yt:
-                        rows_filtered += 1
-                        continue
-                except ValueError:
-                    pass  # Невалидная дата — не фильтруем, оставляем
+        parts_d = date_val.split('.')
+        if len(parts_d) == 3:
+            try:
+                year = int(parts_d[2])
+                years_seen[year] = years_seen.get(year, 0) + 1
+                if year < yf or year > yt:
+                    rows_filtered += 1
+                    continue
+            except ValueError:
+                pass  # Невалидная дата — не фильтруем, оставляем
         
         ws.append([
             str(row[0] if len(row) > 0 else "").strip(),
@@ -1183,10 +1563,11 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         rows_kept += 1
     
     wb.save(result_file)
-    add(f"=== ФИЛЬТР ДАТ {yf}-{yt} ===")
+    add(f"=== ФИЛЬТР ДАТ {yf}-{yt} + удаление строк без дат ===")
     add(f"  Всего строк: {len(original_rows)}")
     add(f"  Оставлено:   {rows_kept}")
-    add(f"  Вырезано:    {rows_filtered} (год вне [{yf}, {yt}])")
+    add(f"  Вырезано по году:    {rows_filtered} (год вне [{yf}, {yt}])")
+    add(f"  Вырезано без даты:   {rows_no_date_filtered}")
     if years_seen:
         yr_list = sorted(years_seen.items())
         add(f"  Года в данных: {', '.join(f'{y}({c})' for y, c in yr_list[:15])}{'...' if len(yr_list) > 15 else ''}")
@@ -1361,7 +1742,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
     add(f"  {elapsed()}")
 
     # ============ ЭТАП 1: ФИО+НОМЕР -> БОТ1 ============
-    if cache.no_date_items and not stop_requested:
+    if cache.no_date_items and not stop_requested and not await check_pause():
         items = [(r, d) for r, d in cache.no_date_items]
         cid = f"s1_{int(time.time())}"
         add(f"=== ЭТАП 1: ФИО+НОМЕР -> бот1 ===")
@@ -1413,7 +1794,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
     # ============ ЭТАП 2: СНИЛС -> БОТ1 ============
     snils_list = cache.snils_no_date
-    if snils_list and not stop_requested:
+    if snils_list and not stop_requested and not await check_pause():
         cid = f"s2_{int(time.time())}"
         add(f"=== ЭТАП 2: СНИЛС -> бот1 ===")
         add(f"  Уникальных СНИЛС: {len(snils_list)}")
@@ -1509,7 +1890,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
     # ============ ЭТАП 3.5: ПРОБИВ ПО НОМЕРУ -> БОТ2 ============
     phones_for_probev = cache.phones_no_date
-    if phones_for_probev and not stop_requested:
+    if phones_for_probev and not stop_requested and not await check_pause():
         cid = f"s35_{int(time.time())}"
         add(f"=== ЭТАП 3.5: ПРОБИВ ПО НОМЕРУ -> бот2 ===")
         add(f"  Номеров без даты: {len(phones_for_probev)}")
@@ -1559,7 +1940,7 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
     # ============ ЭТАП 5: ФИО+ДАТА -> БОТ1 ============
     no_phone_items = [(r, d) for r, d in cache.no_phone_items]
-    if no_phone_items and not stop_requested:
+    if no_phone_items and not stop_requested and not await check_pause():
         cid = f"s5_{int(time.time())}"
         add(f"=== ЭТАП 5: ФИО+ДАТА -> бот1 ===")
         add(f"  Строк без номера: {len(no_phone_items)}")
@@ -1608,11 +1989,11 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ ЭТАП 6: ОСТАВШИЕСЯ ФИО+ДАТА -> БОТ2 (добивка) ============
+    # ============ ЭТАП 6: ОСТАВШИЕСЯ ФИО+ДАТА -> БОТ2 (добивка, построчно в TXT) ============
     no_phone_remaining = [(r, d) for r, d in cache.no_phone_items]
-    if no_phone_remaining and not stop_requested:
+    if no_phone_remaining and not stop_requested and not await check_pause():
         cid = f"s6_{int(time.time())}"
-        add(f"=== ЭТАП 6: ФИО+ДАТА (добивка) -> бот2 ===")
+        add(f"=== ЭТАП 6: ФИО+ДАТА (добивка) -> бот2 (построчный TXT) ===")
         add(f"  Осталось без номера: {len(no_phone_remaining)}")
         
         result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 6: ФИО+ДАТА добивка (бот2)", len(no_phone_remaining), cid, add, topic_id)
@@ -1622,42 +2003,47 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
         if result == "skip":
             add("  [v] ПРОПУЩЕН")
         elif result == "confirm":
-            txt = "\n".join([f"{normalize_fio_local(d['fio'])}\t{d['date']}" for _, d in no_phone_remaining])
-            tpath = os.path.join(TEMP_DIR, f"t6_{int(time.time())}.txt")
-            with open(tpath, 'w', encoding='utf-8') as f:
-                f.write(txt)
-            
             before_empty = len(cache.no_phone_items)
             
-            e2 = await client.get_entity(bot2)
-            last_msgs = await client.get_messages(e2, limit=1)
-            last_msg_id = last_msgs[0].id if last_msgs else 0
-            await client.send_file(e2, tpath)
-            add(f"  TXT отправлен в бот2 ({len(no_phone_remaining)} строк), ожидание XLSX...")
+            # Формируем пары (ФИО, Дата) для построчного TXT
+            fio_date_pairs = []
+            for _, d in no_phone_remaining:
+                fio_norm = normalize_fio_local(d['fio'])
+                date_val = d['date']
+                if fio_norm and date_val:
+                    fio_date_pairs.append((fio_norm, date_val))
             
-            msg = await wait_xlsx(client, bot2, 180, since_msg_id=last_msg_id)
-            if msg:
-                rpath = os.path.join(TEMP_DIR, f"r6_{int(time.time())}.xlsx")
-                await client.download_media(msg, file=rpath)
-                recs = parse_xlsx(rpath)
-                filled = fill_phones_from_response(ws, recs)
-                wb.save(result_file)
-                cache.rebuild()
-                after_empty = len(cache.no_phone_items)
-                add(f"  Ответов: {len(recs)} | Заполнено номеров: {filled} | Без номера: было {before_empty} -> стало {after_empty} {elapsed()}")
-                await send_status("этап 6")
-            else:
-                add("  [!] Бот2 не ответил")
+            e2 = await client.get_entity(bot2)
+            phone_map = await dobiv_fio_date_line_by_line(client, e2, fio_date_pairs, add)
+            
+            # Заполняем номера в таблице
+            phones_filled = 0
+            for clean_ph, (fio, date) in phone_map.items():
+                for row_num, d in no_phone_remaining:
+                    table_fio = normalize_fio_local(d['fio'])
+                    table_date = d['date']
+                    if normalize_fio_local(fio).lower() in table_fio.lower() and date == table_date:
+                        existing = str(ws.cell(row=row_num, column=COL_PHONE).value or "").strip()
+                        if not existing or existing == 'None' or existing == '0':
+                            ws.cell(row=row_num, column=COL_PHONE).value = clean_ph
+                            phones_filled += 1
+                        break
+            
+            wb.save(result_file)
+            cache.rebuild()
+            after_empty = len(cache.no_phone_items)
+            add(f"  Заполнено номеров: {phones_filled} | Без номера: было {before_empty} -> стало {after_empty} {elapsed()}")
+            await send_status("этап 6")
     
     if stop_requested:
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ ЭТАП 7: ДОБИВ САУРОН -> БОТ2 ============
+    # ============ ЭТАП 7: ДОБИВ САУРОН -> БОТ2 (последовательный, как в эталонном коде) ============
     no_phone_final = [(r, d) for r, d in cache.no_phone_items]
-    if no_phone_final and not stop_requested:
+    if no_phone_final and not stop_requested and not await check_pause():
         cid = f"s7_{int(time.time())}"
-        add(f"=== ЭТАП 7: ДОБИВ САУРОН -> бот2 ===")
+        add(f"=== ЭТАП 7: ДОБИВ САУРОН -> бот2 (последовательный пробив) ===")
         add(f"  Строк без номера: {len(no_phone_final)}")
         
         result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 7: ДОБИВ САУРОН", len(no_phone_final), cid, add, topic_id)
@@ -1668,76 +2054,48 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             add("  [v] ПРОПУЩЕН")
         elif result == "confirm":
             e = await client.get_entity(bot2)
-            queries = []
+            
+            # Формируем список уникальных запросов (row_num, fio, date)
             seen = set()
+            queries = []
             for row_num, d in no_phone_final:
-                fio = normalize_fio_local(d['fio'])
-                date = d['date']
-                key = (fio, date)
-                if key not in seen:
+                fio_norm = normalize_fio_local(d['fio'])
+                date_val = d['date']
+                key = (fio_norm, date_val)
+                if key not in seen and fio_norm and date_val:
                     seen.add(key)
-                    queries.append((row_num, fio, date))
+                    queries.append((row_num, fio_norm, date_val))
             
-            add(f"  Уникальных запросов: {len(queries)} (пакетами по 10)")
-            phones_filled = 0
+            add(f"  Уникальных запросов: {len(queries)} (последовательный пробив)")
             
-            for batch_start in range(0, len(queries), 10):
-                if stop_requested:
-                    break
-                batch = queries[batch_start:batch_start + 10]
-                batch_txt = "\n".join([f"{fio}\t{date}" for _, fio, date in batch])
-                
-                try:
-                    await client.send_message(e, batch_txt)
-                    await asyncio.sleep(3)
-                    
-                    async for msg in client.iter_messages(e, limit=5):
-                        if msg.text and ("ОТЧЕТ" in msg.text or "ТЕЛЕФОНЫ" in msg.text):
-                            phones = extract_phones_from_text(msg.text)
-                            if phones:
-                                for _, fio, date in batch:
-                                    for row in range(2, ws.max_row + 1):
-                                        table_fio = normalize_fio_local(str(ws.cell(row=row, column=COL_FIO).value or ""))
-                                        table_date = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
-                                        if table_fio == normalize_fio_local(fio) and table_date == date:
-                                            existing = str(ws.cell(row=row, column=COL_PHONE).value or "").strip()
-                                            if not existing or existing == 'None':
-                                                ws.cell(row=row, column=COL_PHONE).value = phones[0]
-                                                phones_filled += 1
-                            break
-                    
-                    pkg = batch_start // 10 + 1
-                    total_pkgs = (len(queries) + 9) // 10
-                    add(f"  [ДОБИВ] Пакет {pkg}/{total_pkgs}: {len(batch)} запросов, всего заполнено: {phones_filled} {elapsed()}")
-                except FloodWaitError as e:
-                    add(f"  [ДОБИВ] FloodWait: {e.seconds}с")
-                    await asyncio.sleep(e.seconds)
-                except Exception as e:
-                    add(f"  [ДОБИВ] Ошибка: {e}")
+            phones_filled = await dobiv_sauron_sequential(
+                client, e, queries, add, ws, cache, wb, result_file
+            )
             
             wb.save(result_file)
             cache.rebuild()
-            add(f"  ИТОГО ДОБИВ: заполнено номеров {phones_filled} {elapsed()}")
+            add(f"  ИТОГО ДОБИВ САУРОН: заполнено номеров {phones_filled} {elapsed()}")
             await send_status("этап 7")
     
     if stop_requested:
         await send_final_zip()
         return {"ok": True, "log": log, "stopped": True}
 
-    # ============ ЭТАП 8: ДОБИВ КВАРТИР ============
+    # ============ ЭТАП 8: ДОБИВ КВАРТИР (TXT подход: номера → бот2 → TXT → DeepSeek) ============
     addrs_no_apt = cache.addrs_without_apt
-    # Все адреса с квартирами из кэша
-    addrs_with_apt = []
-    for r, d in cache.rows.items():
-        addr = d['addr']
-        if addr and addr != 'None' and re.search(r',\s*\d+\s*$', addr):
-            norm = normalize_address_local(addr)
-            if norm not in addrs_with_apt:
-                addrs_with_apt.append(norm)
     
-    if addrs_no_apt and not stop_requested:
+    if addrs_no_apt and not stop_requested and not await check_pause():
         cid = f"s8_{int(time.time())}"
-        add(f"ЭТАП 8: ДОБИВ КВАРТИР ({len(addrs_no_apt)} адресов без кв, {len(addrs_with_apt)} примеров) {elapsed()}")
+        # Собираем адреса с квартирами для примера
+        addrs_with_apt_list = []
+        for r, d in cache.rows.items():
+            addr = d['addr']
+            if addr and addr != 'None' and re.search(r',\s*\d+\s*$', addr):
+                norm = normalize_address_local(addr)
+                if norm not in addrs_with_apt_list:
+                    addrs_with_apt_list.append(norm)
+        
+        add(f"=== ЭТАП 8: ДОБИВ КВАРТИР ({len(addrs_no_apt)} адресов без кв, {len(addrs_with_apt_list)} примеров) {elapsed()} ===")
         
         result = await safe_confirm_with_buttons(bot_token, chat_id, "ЭТАП 8: ДОБИВ КВАРТИР", len(addrs_no_apt), cid, add, topic_id)
         if result == "stop":
@@ -1747,63 +2105,16 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
             add("[v] ЭТАП 8 ПРОПУЩЕН")
         elif result == "confirm":
             e = await client.get_entity(bot2)
-            unique_phones = list(set([item['phone'] for item in addrs_no_apt]))
+            all_phones = [item['phone'] for item in addrs_no_apt if item['phone']]
             
-            # Пробив номеров (пакетами по 5 параллельно)
-            probed_addresses = []
+            filled_count = await dobiv_apartments_via_txt(
+                client, e, all_phones, add, ws, cache, wb, result_file
+            )
             
-            async def probe_single_phone(phone):
-                try:
-                    phone_for_send = clean_phone_without_plus(phone)
-                    if not phone_for_send.startswith('7'):
-                        phone_for_send = '7' + phone_for_send
-                    
-                    report = await dobiv_by_numbers(client, e, phone, add)
-                    if report:
-                        report_addr = extract_address_from_report(report)
-                        if report_addr:
-                            return normalize_address_local(report_addr)
-                    return None
-                except Exception as ex:
-                    add(f"[КВАРТИРЫ] Ошибка {phone}: {ex}")
-                    return None
-            
-            # Параллельный пробив по 5 номеров
-            for chunk_start in range(0, len(unique_phones), 5):
-                if stop_requested:
-                    break
-                chunk = unique_phones[chunk_start:chunk_start + 5]
-                results = await asyncio.gather(*[probe_single_phone(p) for p in chunk])
-                for addr in results:
-                    if addr and addr not in probed_addresses:
-                        probed_addresses.append(addr)
-                
-                add(f"[КВАРТИРЫ] Пробито {min(chunk_start + 5, len(unique_phones))}/{len(unique_phones)} {elapsed()}")
-                await asyncio.sleep(1)
-            
-            # DeepSeek сопоставление
-            all_examples = list(set(addrs_with_apt + probed_addresses))
-            targets = [item['address_normalized'] for item in addrs_no_apt]
-            
-            if targets and all_examples:
-                add(f"[КВАРТИРЫ] DeepSeek: {len(targets)} целей, {len(all_examples)} примеров {elapsed()}")
-                apt_map = await find_apartments_via_deepseek(targets, all_examples)
-                
-                if apt_map:
-                    for item in addrs_no_apt:
-                        norm = item['address_normalized']
-                        if norm in apt_map:
-                            apartment = apt_map[norm]
-                            row = item['row']
-                            current = str(ws.cell(row=row, column=COL_ADDR).value or "").strip()
-                            ws.cell(row=row, column=COL_ADDR).value = f"{current.rstrip(',')}, {apartment}"
-                    
-                    wb.save(result_file)
-                    cache.rebuild()
-                    await send_status("этап 8")
-                    add(f"[КВАРТИРЫ] Заполнено: {len(apt_map)} {elapsed()}")
-                else:
-                    add("[КВАРТИРЫ] Совпадений не найдено")
+            wb.save(result_file)
+            cache.rebuild()
+            await send_status("этап 8")
+            add(f"[КВАРТИРЫ] Заполнено: {filled_count} {elapsed()}")
     
     if stop_requested:
         await send_final_zip()
@@ -1846,23 +2157,8 @@ async def run_full_cycle(ss, bot1, bot2, bot_token, chat_id,
 
     # ============ ФИНАЛ ============
     add(f"=== ФИНАЛ ===")
-    # Отправляем TXT для чека максов
+    # Отправляем TXT для чека максов (без ведущей 7)
     await send_txt_for_max_check()
-    
-    # Удаляем строки без даты
-    rows_no_date = []
-    for row in range(2, ws.max_row + 1):
-        date_val = str(ws.cell(row=row, column=COL_DATE).value or "").strip()
-        if not date_val or date_val == 'None' or date_val == '0':
-            rows_no_date.append(row)
-    
-    if rows_no_date:
-        add(f"  Удалено строк без даты: {len(rows_no_date)}")
-        for row in reversed(rows_no_date):
-            ws.delete_rows(row)
-        wb.save(result_file)
-    else:
-        add(f"  Все строки с датами — очистка не нужна")
     
     # Финальный ZIP
     await send_final_zip()
@@ -2311,6 +2607,450 @@ async def handle_download_file(request):
     return web.FileResponse(filepath)
 
 
+# ====================== ПАУЗА / РЕЗЮМЕ ======================
+async def handle_pause(request):
+    global pause_requested
+    pause_requested = True
+    return web.json_response({"ok": True, "message": "Пауза запрошена"})
+
+
+async def handle_resume(request):
+    global pause_requested
+    pause_requested = False
+    return web.json_response({"ok": True, "message": "Возобновлено"})
+
+
+# ====================== MAX КОЛОНКА ======================
+async def handle_fill_max(request):
+    """Добавляет столбец MAX из check_max.txt ответа (Номер Имя)"""
+    try:
+        d = await request.json()
+        ss = d.get("session", "")
+        phone_names = d.get("phone_names", {})  # {phone: name}
+        
+        if not ss or not phone_names:
+            return web.json_response({"ok": False, "error": "Нет данных"}, status=400)
+        
+        # Ищем последний result файл
+        result_files = []
+        for f in os.listdir(TEMP_DIR):
+            if f.startswith('result_') and f.endswith('.xlsx'):
+                result_files.append(os.path.join(TEMP_DIR, f))
+        
+        if not result_files:
+            return web.json_response({"ok": False, "error": "Нет файла результата"}, status=404)
+        
+        result_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+        wb = load_workbook(result_files[0], data_only=True)
+        ws = wb.active
+        
+        # Определяем колонку Номер
+        phone_col = None
+        for c in range(1, ws.max_column + 1):
+            val = str(ws.cell(row=1, column=c).value or "").lower().strip()
+            if any(k in val for k in ['номер', 'телефон', 'phone', 'тел']):
+                phone_col = c
+                break
+        
+        if not phone_col:
+            return web.json_response({"ok": False, "error": "Колонка Номер не найдена"}, status=400)
+        
+        # Добавляем колонку MAX после последней существующей
+        max_col = ws.max_column + 1
+        ws.cell(row=1, column=max_col).value = "MAX"
+        
+        filled = 0
+        for row in range(2, ws.max_row + 1):
+            phone_val = str(ws.cell(row=row, column=phone_col).value or "").strip()
+            clean = clean_phone_without_plus(phone_val)
+            # Пробуем с 7 и без
+            for try_phone in [clean, clean[1:] if clean.startswith('7') else '7'+clean]:
+                if try_phone in phone_names:
+                    ws.cell(row=row, column=max_col).value = phone_names[try_phone]
+                    filled += 1
+                    break
+        
+        wb.save(result_files[0])
+        
+        return web.json_response({
+            "ok": True,
+            "filled": filled,
+            "total": len(phone_names)
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+# ====================== РЕГИСТРАЦИЯ / ВХОД ======================
+# Хранилище пользователей: {login: {password, group_id, topic_id, ss}}
+USER_DB = {}  # In-memory; в production нужно персистентное хранение
+
+async def handle_register(request):
+    """Регистрация: создаёт группу с темами, пишет логин/пароль"""
+    try:
+        d = await request.json()
+        ss = d.get("session", "")
+        login = d.get("login", "").strip()
+        password = d.get("password", "").strip()
+        
+        if not ss or not login or not password:
+            return web.json_response({"ok": False, "error": "Заполните все поля"}, status=400)
+        
+        if login in USER_DB:
+            return web.json_response({"ok": False, "error": "Логин занят"}, status=409)
+        
+        client = await get_client(ss)
+        me = await client.get_me()
+        
+        # Создаём супергруппу с темами
+        try:
+            result = await client(CreateChatRequest(
+                users=[me.id],
+                title=f"X Cloud - {login}"
+            ))
+            # Конвертируем в супергруппу
+            migrate = await client(MigrateChatRequest(chat_id=result.chats[0].id))
+            # Включаем темы
+            await client(EditForumRequest(
+                channel=migrate.updates[1].message.peer_id.channel_id,
+                enabled=True
+            ))
+            group_id = f"-100{migrate.updates[1].message.peer_id.channel_id}"
+        except Exception as e:
+            print(f"[REGISTER] Ошибка создания группы: {e}")
+            # Упрощённый вариант: создаём обычную группу
+            result = await client(CreateChatRequest(
+                users=[me.id],
+                title=f"X Cloud - {login}"
+            ))
+            group_id = str(-result.chats[0].id)
+        
+        # Отправляем сообщение с логином и паролем
+        entity = await client.get_entity(int(group_id))
+        await client.send_message(entity, f"LOGIN: {login}\nPASSWORD: {password}\n---\nНе удаляйте это сообщение!")
+        
+        USER_DB[login] = {
+            "password": password,
+            "group_id": group_id,
+            "topic_id": None,
+            "ss": ss
+        }
+        
+        return web.json_response({
+            "ok": True,
+            "message": "Группа создана",
+            "group_id": group_id
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def handle_login(request):
+    """Вход: ищет по всем группам логин и сверяет пароль"""
+    try:
+        d = await request.json()
+        ss = d.get("session", "")
+        login = d.get("login", "").strip()
+        password = d.get("password", "").strip()
+        
+        if not ss or not login or not password:
+            return web.json_response({"ok": False, "error": "Заполните все поля"}, status=400)
+        
+        # Сначала проверяем локальную БД
+        if login in USER_DB and USER_DB[login]["password"] == password:
+            return web.json_response({
+                "ok": True,
+                "message": "Вход выполнен",
+                "group_id": USER_DB[login]["group_id"],
+                "ss": USER_DB[login]["ss"]
+            })
+        
+        # Ищем в группах аккаунта
+        client = await get_client(ss)
+        dialogs = await client.get_dialogs()
+        
+        for dialog in dialogs:
+            if not dialog.is_group:
+                continue
+            try:
+                async for msg in client.iter_messages(dialog.entity, limit=50):
+                    if msg.text and "LOGIN:" in msg.text:
+                        found_login = re.search(r'LOGIN:\s*(\S+)', msg.text)
+                        found_password = re.search(r'PASSWORD:\s*(\S+)', msg.text)
+                        if found_login and found_password:
+                            if found_login.group(1) == login and found_password.group(1) == password:
+                                group_id = str(-dialog.entity.id) if hasattr(dialog.entity, 'id') else str(dialog.id)
+                                USER_DB[login] = {
+                                    "password": password,
+                                    "group_id": group_id,
+                                    "topic_id": None,
+                                    "ss": ss
+                                }
+                                return web.json_response({
+                                    "ok": True,
+                                    "message": "Вход выполнен (найдено в группе)",
+                                    "group_id": group_id
+                                })
+            except:
+                continue
+        
+        return web.json_response({"ok": False, "error": "Неверный логин или пароль"}, status=401)
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+# ====================== ОБЛАЧНОЕ ХРАНИЛИЩЕ ======================
+CLOUD_TRASH = {}  # {path: deleted_at_timestamp}
+
+async def handle_cloud_list(request):
+    """Список файлов/папок в облаке"""
+    try:
+        d = await request.json()
+        ss = d.get("session", "")
+        group_id = d.get("group_id", "")
+        path = d.get("path", "")  # Путь вида "Папка1/Подпапка2"
+        
+        if not ss or not group_id:
+            return web.json_response({"ok": False, "error": "Нет сессии или группы"}, status=400)
+        
+        client = await get_client(ss)
+        entity = await client.get_entity(int(group_id))
+        
+        # Структура: папки = темы, файлы = сообщения в теме
+        items = []
+        seen_folders = set()
+        seen_files = set()
+        
+        if not path:
+            # Корень: показываем все темы (папки)
+            async for msg in client.iter_messages(entity, limit=200):
+                if msg.text and msg.text.startswith("LOGIN:"):
+                    continue  # Пропускаем сообщение с логином
+                
+                # Определяем папку по message_thread_id или по тексту
+                folder = None
+                if hasattr(msg, 'reply_to') and msg.reply_to:
+                    folder = f"topic_{msg.reply_to.reply_to_top_id}"
+                elif msg.text and "FOLDER:" in msg.text:
+                    folder = re.search(r'FOLDER:\s*(\S+)', msg.text)
+                    if folder:
+                        folder = folder.group(1)
+                
+                if msg.document:
+                    for attr in msg.document.attributes:
+                        if isinstance(attr, DocumentAttributeFilename):
+                            name = attr.file_name
+                            if name not in seen_files:
+                                seen_files.add(name)
+                                items.append({
+                                    "name": name,
+                                    "type": "file",
+                                    "size": msg.document.size,
+                                    "date": msg.date.isoformat() if msg.date else None,
+                                    "msg_id": msg.id,
+                                    "path": path,
+                                    "in_trash": check_trash(path, name)
+                                })
+                            break
+        else:
+            # Внутри папки: ищем файлы с префиксом подпапки
+            path_prefix = path.replace('/', ' - ')
+            async for msg in client.iter_messages(entity, limit=500):
+                if not msg.document:
+                    continue
+                for attr in msg.document.attributes:
+                    if isinstance(attr, DocumentAttributeFilename):
+                        name = attr.file_name
+                        caption = msg.text or ""
+                        
+                        # Проверяем принадлежность к пути
+                        if path_prefix in caption or path_prefix in name:
+                            display_name = name
+                            if name not in seen_files:
+                                seen_files.add(name)
+                                items.append({
+                                    "name": display_name,
+                                    "type": "file",
+                                    "size": msg.document.size,
+                                    "date": msg.date.isoformat() if msg.date else None,
+                                    "msg_id": msg.id,
+                                    "path": path,
+                                    "in_trash": check_trash(path, name)
+                                })
+                        break
+        
+        return web.json_response({"ok": True, "items": items})
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+def check_trash(path, name):
+    key = f"{path}/{name}" if path else name
+    if key in CLOUD_TRASH:
+        deleted_at = CLOUD_TRASH[key]
+        # Храним в корзине 30 дней
+        if time.time() - deleted_at < 30 * 24 * 3600:
+            return True
+        else:
+            del CLOUD_TRASH[key]
+    return False
+
+
+async def handle_cloud_upload(request):
+    """Загрузка файла в облако"""
+    try:
+        reader = await request.multipart()
+        
+        # Читаем метаданные
+        ss = None
+        group_id = None
+        path = ""
+        file_data = None
+        filename = ""
+        
+        while True:
+            field = await reader.next()
+            if not field:
+                break
+            if field.name == 'session':
+                ss = (await field.read()).decode()
+            elif field.name == 'group_id':
+                group_id = (await field.read()).decode()
+            elif field.name == 'path':
+                path = (await field.read()).decode()
+            elif field.name == 'file':
+                file_data = await field.read()
+                filename = field.filename or "file"
+        
+        if not ss or not group_id or not file_data:
+            return web.json_response({"ok": False, "error": "Нет данных"}, status=400)
+        
+        client = await get_client(ss)
+        entity = await client.get_entity(int(group_id))
+        
+        # Сохраняем файл временно
+        tmp_path = os.path.join(TEMP_DIR, f"cloud_{int(time.time())}_{filename}")
+        with open(tmp_path, 'wb') as f:
+            f.write(file_data)
+        
+        # Формируем подпись: путь через тире
+        caption = path.replace('/', ' - ') if path else ""
+        
+        # Отправляем в группу
+        await client.send_file(entity, tmp_path, caption=caption)
+        
+        # Удаляем временный файл
+        try:
+            os.remove(tmp_path)
+        except:
+            pass
+        
+        return web.json_response({"ok": True, "message": "Файл загружен"})
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def handle_cloud_delete(request):
+    """Удаление файла (перемещение в корзину на 30 дней)"""
+    try:
+        d = await request.json()
+        ss = d.get("session", "")
+        group_id = d.get("group_id", "")
+        path = d.get("path", "")
+        filename = d.get("filename", "")
+        msg_id = d.get("msg_id")
+        
+        if not ss or not group_id:
+            return web.json_response({"ok": False, "error": "Нет данных"}, status=400)
+        
+        key = f"{path}/{filename}" if path else filename
+        CLOUD_TRASH[key] = time.time()
+        
+        # Опционально: удаляем сообщение из группы
+        if msg_id:
+            try:
+                client = await get_client(ss)
+                entity = await client.get_entity(int(group_id))
+                await client.delete_messages(entity, [msg_id])
+            except:
+                pass
+        
+        return web.json_response({"ok": True, "message": f"Файл {filename} перемещён в корзину (30 дней)"})
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def handle_cloud_mkdir(request):
+    """Создание папки в облаке (создаёт тему в группе)"""
+    try:
+        d = await request.json()
+        ss = d.get("session", "")
+        group_id = d.get("group_id", "")
+        path = d.get("path", "")
+        folder_name = d.get("folder_name", "").strip()
+        
+        if not ss or not group_id or not folder_name:
+            return web.json_response({"ok": False, "error": "Нет данных"}, status=400)
+        
+        client = await get_client(ss)
+        entity = await client.get_entity(int(group_id))
+        
+        # Создаём тему (если супергруппа с темами)
+        try:
+            full_path = f"{path}/{folder_name}" if path else folder_name
+            await client(CreateForumTopicRequest(
+                channel=entity,
+                title=full_path,
+                icon_color=0x6FB9F0
+            ))
+        except Exception:
+            # Если нет тем — просто отправляем сообщение-маркер
+            full_path = f"{path}/{folder_name}" if path else folder_name
+            await client.send_message(entity, f"FOLDER: {full_path}")
+        
+        return web.json_response({"ok": True, "message": f"Папка {folder_name} создана"})
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def handle_cloud_download(request):
+    """Скачивание файла из облака"""
+    try:
+        d = await request.json()
+        ss = d.get("session", "")
+        group_id = d.get("group_id", "")
+        msg_id = d.get("msg_id")
+        
+        if not ss or not group_id or not msg_id:
+            return web.json_response({"ok": False, "error": "Нет данных"}, status=400)
+        
+        client = await get_client(ss)
+        entity = await client.get_entity(int(group_id))
+        
+        msg = await client.get_messages(entity, ids=[msg_id])
+        if not msg or not msg[0] or not msg[0].document:
+            return web.json_response({"ok": False, "error": "Файл не найден"}, status=404)
+        
+        filepath = os.path.join(TEMP_DIR, f"dl_{int(time.time())}_{msg_id}")
+        await client.download_media(msg[0], file=filepath)
+        
+        return web.json_response({
+            "ok": True,
+            "filepath": filepath,
+            "filename": next((a.file_name for a in msg[0].document.attributes if isinstance(a, DocumentAttributeFilename)), "file")
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 # ====================== ЗАПУСК ======================
 app = web.Application(middlewares=[log_and_cors], client_max_size=200 * 1024 * 1024)
 app.router.add_get("/", handle_root)
@@ -2321,8 +3061,18 @@ app.router.add_post("/send-code", handle_send_code)
 app.router.add_post("/verify-code", handle_verify_code)
 app.router.add_post("/full-probev", handle_full_probev)
 app.router.add_post("/stop", handle_stop)
+app.router.add_post("/pause", handle_pause)
+app.router.add_post("/resume", handle_resume)
 app.router.add_post("/finish-session", handle_finish_session)
 app.router.add_post("/normalize-addresses", handle_normalize_addresses)
+app.router.add_post("/fill-max", handle_fill_max)
+app.router.add_post("/register", handle_register)
+app.router.add_post("/login", handle_login)
+app.router.add_post("/cloud-list", handle_cloud_list)
+app.router.add_post("/cloud-upload", handle_cloud_upload)
+app.router.add_post("/cloud-download", handle_cloud_download)
+app.router.add_post("/cloud-delete", handle_cloud_delete)
+app.router.add_post("/cloud-mkdir", handle_cloud_mkdir)
 app.router.add_get("/download/{filename}", handle_download_file)
 
 
@@ -2330,7 +3080,7 @@ async def on_startup(app):
     port = app["port"]
     msg = (
         "=" * 60 + "\n"
-        f"X Backend v17.0 ЗАПУЩЕН (оптимизированный: ×10, фильтр дат первый, кэш, параллельные боты, batch 200)\n"
+        f"X Backend v18.0 ЗАПУЩЕН (облако, регистрация, пауза, построчный пробив)\n"
         f"Host: 0.0.0.0  |  Port: {port}\n"
         + "=" * 60
     )
