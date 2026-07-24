@@ -18,8 +18,19 @@ from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError, FloodWaitError
 from telethon.sessions import StringSession
 from telethon.tl.types import DocumentAttributeFilename
-from telethon.tl.functions.messages import CreateChatRequest, MigrateChatRequest
-from telethon.tl.functions.channels import CreateForumTopicRequest, EditForumRequest
+
+# Условные импорты (могут отсутствовать в старых версиях telethon)
+try:
+    from telethon.tl.functions.messages import CreateChatRequest, MigrateChatRequest
+except ImportError:
+    CreateChatRequest = None
+    MigrateChatRequest = None
+
+try:
+    from telethon.tl.functions.channels import CreateForumTopicRequest, EditForumRequest
+except ImportError:
+    CreateForumTopicRequest = None
+    EditForumRequest = None
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import PatternFill
 
@@ -2703,32 +2714,59 @@ async def handle_register(request):
         client = await get_client(ss)
         me = await client.get_me()
         
-        # Создаём супергруппу с темами
-        try:
-            result = await client(CreateChatRequest(
-                users=[me.id],
-                title=f"X Cloud - {login}"
-            ))
-            # Конвертируем в супергруппу
-            migrate = await client(MigrateChatRequest(chat_id=result.chats[0].id))
-            # Включаем темы
-            await client(EditForumRequest(
-                channel=migrate.updates[1].message.peer_id.channel_id,
-                enabled=True
-            ))
-            group_id = f"-100{migrate.updates[1].message.peer_id.channel_id}"
-        except Exception as e:
-            print(f"[REGISTER] Ошибка создания группы: {e}")
-            # Упрощённый вариант: создаём обычную группу
-            result = await client(CreateChatRequest(
-                users=[me.id],
-                title=f"X Cloud - {login}"
-            ))
-            group_id = str(-result.chats[0].id)
+        group_id = None
+        
+        # Способ 1: CreateChatRequest (если доступен)
+        if CreateChatRequest is not None:
+            try:
+                result = await client(CreateChatRequest(
+                    users=[me.id],
+                    title=f"X Cloud - {login}"
+                ))
+                group_id = str(-result.chats[0].id)
+                
+                # Пробуем мигрировать в супергруппу и включить темы
+                if MigrateChatRequest is not None:
+                    try:
+                        migrate = await client(MigrateChatRequest(chat_id=result.chats[0].id))
+                        group_id = f"-100{migrate.updates[1].message.peer_id.channel_id}"
+                        if EditForumRequest is not None:
+                            try:
+                                await client(EditForumRequest(
+                                    channel=migrate.updates[1].message.peer_id.channel_id,
+                                    enabled=True
+                                ))
+                            except Exception:
+                                pass  # Темы не обязательны
+                    except Exception:
+                        pass  # Миграция не обязательна
+            except Exception as e:
+                print(f"[REGISTER] CreateChatRequest ошибка: {e}")
+        
+        # Способ 2: если CreateChatRequest не сработал — создаём через диалог с самим собой
+        if not group_id:
+            try:
+                # Создаём чат через send_message себе (создаст Saved Messages-like диалог)
+                await client.send_message('me', f"CLOUD GROUP: X Cloud - {login}\nLOGIN: {login}\nPASSWORD: {password}")
+                # Ищем последний созданный диалог
+                dialogs = await client.get_dialogs()
+                for d in dialogs:
+                    if d.name and login in d.name:
+                        group_id = str(-d.id) if hasattr(d, 'id') else str(d.id)
+                        break
+                if not group_id:
+                    # Fallback: используем "Saved Messages" как хранилище
+                    group_id = "me"
+            except Exception as e:
+                print(f"[REGISTER] Fallback ошибка: {e}")
+                return web.json_response({"ok": False, "error": f"Не удалось создать группу: {e}"}, status=500)
         
         # Отправляем сообщение с логином и паролем
-        entity = await client.get_entity(int(group_id))
-        await client.send_message(entity, f"LOGIN: {login}\nPASSWORD: {password}\n---\nНе удаляйте это сообщение!")
+        try:
+            entity = await client.get_entity(int(group_id)) if group_id != "me" else "me"
+            await client.send_message(entity, f"LOGIN: {login}\nPASSWORD: {password}\n---\nНе удаляйте это сообщение!")
+        except Exception:
+            pass  # Сообщение не критично
         
         USER_DB[login] = {
             "password": password,
@@ -3001,17 +3039,20 @@ async def handle_cloud_mkdir(request):
         client = await get_client(ss)
         entity = await client.get_entity(int(group_id))
         
-        # Создаём тему (если супергруппа с темами)
-        try:
-            full_path = f"{path}/{folder_name}" if path else folder_name
-            await client(CreateForumTopicRequest(
-                channel=entity,
-                title=full_path,
-                icon_color=0x6FB9F0
-            ))
-        except Exception:
-            # Если нет тем — просто отправляем сообщение-маркер
-            full_path = f"{path}/{folder_name}" if path else folder_name
+        # Создаём тему (если супергруппа с темами и API доступен)
+        full_path = f"{path}/{folder_name}" if path else folder_name
+        if CreateForumTopicRequest is not None:
+            try:
+                await client(CreateForumTopicRequest(
+                    channel=entity,
+                    title=full_path,
+                    icon_color=0x6FB9F0
+                ))
+            except Exception:
+                # Если нет тем — просто отправляем сообщение-маркер
+                await client.send_message(entity, f"FOLDER: {full_path}")
+        else:
+            # API не доступен — используем сообщение-маркер
             await client.send_message(entity, f"FOLDER: {full_path}")
         
         return web.json_response({"ok": True, "message": f"Папка {folder_name} создана"})
