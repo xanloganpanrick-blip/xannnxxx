@@ -887,8 +887,6 @@ function loadCheckTxt(e) {
         }
         checkTxtData = phoneToFio;
         document.getElementById('dobiTxtInfo').textContent = 'Загружено: ' + Object.keys(phoneToFio).length + ' номеров';
-        document.getElementById('btnRunDobivFromTxt').disabled = false;
-        document.getElementById('dobiTxtData').value = JSON.stringify(phoneToFio);
         toast('TXT загружен!', true);
     };
     reader.readAsText(f);
@@ -984,7 +982,7 @@ function filterByUploadedTxt() {
     addLog('[ФИЛЬТР TXT] Было ' + beforeCount + ' → осталось ' + kept.length + ' (удалено ' + deleted + ', заполнено ФИО ' + filled + ')', 'ok');
     
     // Показываем шаг 3
-    var el = document.getElementById('btnSessionFinish2'); if (el) el.style.display = 'inline-block';
+    document.getElementById('stepEnd3').style.display = 'block';
     var finishBtn = document.getElementById('btnFinishSession');
     if (finishBtn) finishBtn.disabled = false;
     document.getElementById('btnFilterByTxt').disabled = true;
@@ -1458,19 +1456,83 @@ document.getElementById('mergeFileInput').addEventListener('change', function(e)
     document.getElementById('mergeFileList').textContent = 'Файлы: ' + mergeFiles.map(function(f) { return f.name; }).join(', ');
 });
 
-document.getElementById('mergeBtn').addEventListener('click', function() {
+var _mergedResult = null;
+
+document.getElementById('mergeBtn').addEventListener('click', async function() {
     if (!mergeFiles.length) return toast('Нет файлов', false);
-    toast('Объединение ' + mergeFiles.length + ' файлов...', true);
-    document.getElementById('mergeDownloadBtn').style.display = 'inline-block';
+    var btn = document.getElementById('mergeBtn');
+    btn.disabled = true;
+    btn.textContent = 'Объединение...';
+    
+    try {
+        var allTables = [];
+        for (var i = 0; i < mergeFiles.length; i++) {
+            var f = mergeFiles[i];
+            var buf = await f.arrayBuffer();
+            var wb = XLSX.read(buf, {type: 'array'});
+            var ws = wb.Sheets[wb.SheetNames[0]];
+            var data = XLSX.utils.sheet_to_json(ws, {header: 1, defval: ''});
+            if (data.length < 2) continue;
+            allTables.push({headers: data[0], rows: data.slice(1), name: f.name});
+        }
+        
+        if (!allTables.length) { toast('Нет валидных таблиц', false); return; }
+        
+        // Находим колонку с N таблицы (добавляем перед адресом)
+        var baseHeaders = allTables[0].headers.slice();
+        var addrIdx = -1;
+        for (var j = 0; j < baseHeaders.length; j++) {
+            var hh = (''+baseHeaders[j]).toLowerCase();
+            if (hh.includes('адрес') || hh.includes('address')) { addrIdx = j; break; }
+        }
+        var tnCol = 'N таблицы';
+        var newHeaders = addrIdx >= 0
+            ? baseHeaders.slice(0, addrIdx).concat([tnCol]).concat(baseHeaders.slice(addrIdx))
+            : [tnCol].concat(baseHeaders);
+        
+        var allRows = [];
+        for (var t = 0; t < allTables.length; t++) {
+            var tbl = allTables[t];
+            for (var r = 0; r < tbl.rows.length; r++) {
+                var row = tbl.rows[r];
+                var rowMap = {};
+                for (var k = 0; k < tbl.headers.length; k++) {
+                    if (k < row.length) rowMap[tbl.headers[k].toLowerCase()] = row[k];
+                }
+                var newRow = [];
+                for (var ci = 0; ci < newHeaders.length; ci++) {
+                    if (newHeaders[ci] === tnCol) newRow.push(String(t + 1));
+                    else newRow.push(rowMap[newHeaders[ci].toLowerCase()] || '');
+                }
+                allRows.push(newRow);
+            }
+        }
+        
+        _mergedResult = {headers: newHeaders, rows: allRows};
+        document.getElementById('mergeFileList').textContent = 
+            'Объединено: ' + allTables.length + ' таблиц, ' + allRows.length + ' строк (' +
+            allTables.map(function(t){return t.name;}).join(', ') + ')';
+        document.getElementById('mergeDownloadBtn').style.display = 'inline-block';
+        toast('Объединено ' + allTables.length + ' таблиц (' + allRows.length + ' строк)!', true);
+    } catch(e) {
+        toast('Ошибка: ' + e.message, false);
+    }
+    btn.disabled = false;
+    btn.textContent = 'Объединить';
 });
 
 document.getElementById('mergeDownloadBtn').addEventListener('click', function() {
-    if (!mergeFiles.length) return toast('Нет данных', false);
-    toast('Скачивание...', true);
+    if (!_mergedResult) return toast('Сначала объедините файлы', false);
+    var ws = XLSX.utils.aoa_to_sheet([_mergedResult.headers].concat(_mergedResult.rows));
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Merged');
+    XLSX.writeFile(wb, 'merged_result.xlsx');
+    toast('Скачано!', true);
 });
 
 document.getElementById('mergeClearBtn').addEventListener('click', function() {
     mergeFiles = [];
+    _mergedResult = null;
     document.getElementById('mergeFileList').textContent = '';
     document.getElementById('mergeDownloadBtn').style.display = 'none';
 });
