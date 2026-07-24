@@ -92,6 +92,14 @@
         .file-list { margin-top: 8px; max-height: 80px; overflow-y: auto; font-size: 11px; color: #666; }
         .file-list .file-item { padding: 2px 0; }
         .hidden { display: none !important; }
+        /* Auth Gate */
+        #authGate { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #050505; z-index: 9999; display: flex; align-items: center; justify-content: center; }
+        #authGate .gate-box { background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 16px; padding: 32px; width: 380px; max-width: 95vw; text-align: center; }
+        #authGate .gate-logo { font-size: 48px; font-weight: 900; margin-bottom: 8px; }
+        #authGate .gate-logo span { color: #ff4444; }
+        #authGate .gate-sub { font-size: 13px; color: #888; margin-bottom: 24px; }
+        #authGate input { text-align: center; font-size: 16px; padding: 12px; }
+        #authGate button { width: 100%; padding: 12px; font-size: 15px; }
         @media (max-width: 768px) { 
             .sidebar { width: 50px; padding: 10px 4px; } 
             .sidebar .logo { font-size: 16px; text-align: center; margin-bottom: 16px; } 
@@ -108,6 +116,31 @@
     </style>
 </head>
 <body>
+
+<!-- AUTH GATE: обязательная авторизация Telegram при входе -->
+<div id="authGate">
+    <div class="gate-box">
+        <div class="gate-logo"><span>X</span></div>
+        <div class="gate-sub">Войдите через Telegram для доступа</div>
+        <div id="gateStep1">
+            <input type="text" id="gatePhone" placeholder="+79001234567" value="+7">
+            <button class="btn-white mt-8" onclick="gateSendCode()">Отправить код</button>
+            <p class="text-xs mt-8" style="color:#555;">Аккаунт сохранится локально в браузере</p>
+        </div>
+        <div id="gateStep2" style="display:none;">
+            <p class="text-sm mb-8 green">Код отправлен в Telegram</p>
+            <input type="text" id="gateCode" placeholder="Код из Telegram">
+            <button class="btn-white mt-8" onclick="gateVerifyCode()">Подтвердить</button>
+        </div>
+        <div id="gateStep2FA" style="display:none;">
+            <p class="text-sm mb-8 yellow">Требуется пароль 2FA</p>
+            <input type="password" id="gate2fa" placeholder="Пароль облачной защиты">
+            <button class="btn-white mt-8" onclick="gateVerify2FA()">Войти</button>
+        </div>
+        <div id="gateError" class="text-sm red mt-8" style="display:none;"></div>
+    </div>
+</div>
+
 <div class="app">
 
     <!-- SIDEBAR -->
@@ -116,10 +149,10 @@
         <button class="nav-btn active" data-page="accounts">Аккаунты</button>
         <button class="nav-btn" data-page="probiv">Пробивы</button>
         <button class="nav-btn" data-page="checker">Чекер</button>
-        <button class="nav-btn" data-page="dobiv">Добив</button>
         <button class="nav-btn" data-page="server">Сервер</button>
         <button class="nav-btn" data-page="merge">Объединить</button>
         <button class="nav-btn" data-page="addrs">Адреса</button>
+        <button class="nav-btn" style="margin-top:auto;color:#ff4444;font-size:10px;" onclick="gateLogout()">Выйти</button>
     </div>
 
     <!-- MAIN CONTENT -->
@@ -300,32 +333,6 @@
                     <button class="btn-dark btn-sm" id="btnChkDownload" style="display:none" onclick="downloadChkResult()">Скачать XLSX</button>
                 </div>
                 <div id="chkResult"></div>
-            </div>
-        </div>
-
-        <!-- ========== ДОБИВ ========== -->
-        <div class="page" id="page-dobiv">
-            <div class="title">Добив</div>
-            <div class="subtitle">Объединение таблиц: заполнить пропуски из источника</div>
-            <div class="card">
-                <h3>1. Основная таблица (XLSX)</h3>
-                <button class="btn-dark mb-8" onclick="document.getElementById('dobMain').click()">Выбрать XLSX</button>
-                <input type="file" id="dobMain" accept=".xlsx,.xls" style="display:none" onchange="loadDobMain(event)">
-                <div id="dobMainInfo" class="text-sm"></div>
-            </div>
-            <div class="card">
-                <h3>2. Таблица-источник (XLSX)</h3>
-                <button class="btn-dark mb-8" onclick="document.getElementById('dobSrc').click()">Выбрать XLSX</button>
-                <input type="file" id="dobSrc" accept=".xlsx,.xls" style="display:none" onchange="loadDobSrc(event)">
-                <div id="dobSrcInfo" class="text-sm"></div>
-            </div>
-            <div class="card">
-                <h3>3. Результат</h3>
-                <div class="flex mb-8">
-                    <button class="btn-white" onclick="runDobiv()">Запустить</button>
-                    <button class="btn-dark btn-sm" id="btnDobDownload" style="display:none" onclick="downloadDobResult()">Скачать XLSX</button>
-                </div>
-                <div id="dobResult"></div>
             </div>
         </div>
 
@@ -542,6 +549,117 @@ function showAddAcc() {
     document.getElementById('acc2fa').value = '';
 }
 function closeAccModal() { document.getElementById('accModal').classList.remove('active'); }
+
+// ==================== AUTH GATE ====================
+var _gatePhone = '';
+var _gateHash = '';
+
+function showGateError(msg) {
+    var el = document.getElementById('gateError');
+    el.textContent = msg;
+    el.style.display = 'block';
+}
+
+async function gateSendCode() {
+    var phone = document.getElementById('gatePhone').value.trim();
+    if (!phone || phone.length < 10) return showGateError('Введите номер');
+    _gatePhone = phone;
+    try {
+        var resp = await apiPost('/send-code', {phone: phone});
+        if (resp.ok) {
+            document.getElementById('gateStep1').style.display = 'none';
+            document.getElementById('gateStep2').style.display = 'block';
+            document.getElementById('gateError').style.display = 'none';
+        } else {
+            showGateError(resp.error || 'Ошибка отправки кода');
+        }
+    } catch(e) {
+        showGateError('Сервер недоступен: ' + e.message);
+    }
+}
+
+async function gateVerifyCode() {
+    var code = document.getElementById('gateCode').value.trim();
+    if (!code) return showGateError('Введите код');
+    try {
+        var resp = await apiPost('/verify-code', {phone: _gatePhone, code: code, password: ''});
+        if (resp.ok) {
+            if (resp.need_2fa) {
+                document.getElementById('gateStep2').style.display = 'none';
+                document.getElementById('gateStep2FA').style.display = 'block';
+            } else {
+                gateDone(resp);
+            }
+        } else {
+            showGateError(resp.error || 'Неверный код');
+        }
+    } catch(e) {
+        showGateError('Ошибка: ' + e.message);
+    }
+}
+
+async function gateVerify2FA() {
+    var password = document.getElementById('gate2fa').value.trim();
+    if (!password) return showGateError('Введите пароль');
+    try {
+        var resp = await apiPost('/verify-code', {phone: _gatePhone, code: document.getElementById('gateCode').value, password: password});
+        if (resp.ok && !resp.need_2fa) {
+            gateDone(resp);
+        } else {
+            showGateError(resp.error || 'Неверный пароль');
+        }
+    } catch(e) {
+        showGateError('Ошибка: ' + e.message);
+    }
+}
+
+function gateDone(resp) {
+    // Сохраняем аккаунт в DB (так же как на вкладке Аккаунты)
+    DB.accs = DB.accs || [];
+    // Удаляем старый аккаунт с таким же номером если есть
+    DB.accs = DB.accs.filter(function(a) { return a.phone !== _gatePhone; });
+    DB.accs.unshift({
+        phone: _gatePhone,
+        ss: resp.session,
+        name: resp.name || _gatePhone
+    });
+    saveDB();
+    // Скрываем гейт
+    document.getElementById('authGate').style.display = 'none';
+    // Обновляем UI
+    renderAccs();
+    refreshAccSelects();
+    toast('Вход: ' + (resp.name || _gatePhone), true);
+}
+
+function gateLogout() {
+    if (!confirm('Выйти из аккаунта? При следующем входе потребуется код из Telegram.')) return;
+    DB.accs = [];
+    saveDB();
+    document.getElementById('authGate').style.display = 'flex';
+    document.getElementById('gateStep1').style.display = 'block';
+    document.getElementById('gateStep2').style.display = 'none';
+    document.getElementById('gateStep2FA').style.display = 'none';
+    document.getElementById('gateError').style.display = 'none';
+    document.getElementById('gatePhone').value = '+7';
+    document.getElementById('gateCode').value = '';
+    document.getElementById('gate2fa').value = '';
+    _gatePhone = '';
+    _gateHash = '';
+    renderAccs();
+    refreshAccSelects();
+    toast('Вы вышли', true);
+}
+
+// Enter в поле телефона → отправка кода
+document.addEventListener('DOMContentLoaded', function() {
+    var gp = document.getElementById('gatePhone');
+    if (gp) gp.addEventListener('keydown', function(e) { if (e.key === 'Enter') gateSendCode(); });
+    var gc = document.getElementById('gateCode');
+    if (gc) gc.addEventListener('keydown', function(e) { if (e.key === 'Enter') gateVerifyCode(); });
+    var g2 = document.getElementById('gate2fa');
+    if (g2) g2.addEventListener('keydown', function(e) { if (e.key === 'Enter') gateVerify2FA(); });
+});
 
 async function apiPost(endpoint, body) {
     var srv = getServerUrl();
@@ -1727,6 +1845,13 @@ function downloadAddrResult() {
     renderAccs();
     refreshAccSelects();
     checkServer();
+    
+    // Auth Gate: если нет аккаунтов — показываем обязательную авторизацию
+    if (!DB.accs || DB.accs.length === 0) {
+        document.getElementById('authGate').style.display = 'flex';
+    } else {
+        document.getElementById('authGate').style.display = 'none';
+    }
 })();
 </script>
 </body>
