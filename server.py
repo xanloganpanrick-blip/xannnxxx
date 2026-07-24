@@ -2697,8 +2697,9 @@ async def handle_fill_max(request):
 # Никакого USER_DB! Все данные — в группах Telegram аккаунта.
 # Логин/пароль ищется сканированием ВСЕХ групп/диалогов аккаунта.
 
-async def _find_login_in_account(client, login, password):
-    """Сканирует все диалоги аккаунта в поисках сообщения с LOGIN: + PASSWORD:"""
+async def _find_login_in_account(client, login, password=None):
+    """Сканирует все диалоги аккаунта в поисках сообщения с LOGIN: + PASSWORD:
+    Если password=None — ищет только по логину (для проверки «уже зарегистрирован?»)."""
     dialogs = await client.get_dialogs()
     
     for dialog in dialogs:
@@ -2712,18 +2713,27 @@ async def _find_login_in_account(client, login, password):
                 found_login = re.search(r'LOGIN:\s*(\S+)', msg.text)
                 found_password = re.search(r'PASSWORD:\s*(\S+)', msg.text)
                 
-                if found_login and found_password:
-                    if found_login.group(1).strip() == login.strip() and found_password.group(1).strip() == password.strip():
-                        # Определяем ID группы/диалога
-                        if hasattr(dialog, 'entity') and hasattr(dialog.entity, 'id'):
-                            gid = str(dialog.entity.id)
+                if found_login:
+                    login_match = found_login.group(1).strip() == login.strip()
+                    if password is not None:
+                        # Полная проверка: логин И пароль
+                        if login_match and found_password and found_password.group(1).strip() == password.strip():
+                            pass  # ok
                         else:
-                            gid = str(dialog.id) if hasattr(dialog, 'id') else "0"
-                        return {
-                            "group_id": gid,
-                            "group_name": dialog.name or "Без названия",
-                            "is_group": dialog.is_group
-                        }
+                            continue
+                    elif not login_match:
+                        continue
+                    
+                    # Определяем ID группы/диалога
+                    if hasattr(dialog, 'entity') and hasattr(dialog.entity, 'id'):
+                        gid = str(dialog.entity.id)
+                    else:
+                        gid = str(dialog.id) if hasattr(dialog, 'id') else "0"
+                    return {
+                        "group_id": gid,
+                        "group_name": dialog.name or "Без названия",
+                        "is_group": dialog.is_group
+                    }
         except Exception:
             continue
     
@@ -2731,7 +2741,8 @@ async def _find_login_in_account(client, login, password):
 
 
 async def handle_register(request):
-    """Регистрация: создаёт новую группу, пишет туда LOGIN + PASSWORD. Группа = домашняя папка."""
+    """Регистрация: пишет LOGIN + PASSWORD в Saved Messages (гарантированно работает).
+    Домашняя папка = Saved Messages. Позже можно создать отдельную группу через облако."""
     try:
         d = await request.json()
         ss = d.get("session", "")
@@ -2742,10 +2753,9 @@ async def handle_register(request):
             return web.json_response({"ok": False, "error": "Заполните все поля"}, status=400)
         
         client = await get_client(ss)
-        me = await client.get_me()
         
         # Проверяем: нет ли уже такого логина в группах аккаунта
-        existing = await _find_login_in_account(client, login, password)
+        existing = await _find_login_in_account(client, login, None)  # ищем только по логину
         if existing:
             return web.json_response({
                 "ok": True,
@@ -2755,45 +2765,22 @@ async def handle_register(request):
                 "already_exists": True
             })
         
-        # Создаём группу (новую «папку»)
-        group_id = None
-        group_title = f"🏠 {login}"
+        # Пишем логин/пароль в Saved Messages — это гарантированно работает
+        await client.send_message('me', f"LOGIN: {login}\nPASSWORD: {password}\n---\nНе удаляйте это сообщение!")
         
-        # Способ 1: через CreateChatRequest
-        if CreateChatRequest is not None:
-            try:
-                result = await client(CreateChatRequest(
-                    users=[me.id],
-                    title=group_title
-                ))
-                group_id = str(-result.chats[0].id)
-            except Exception as e:
-                print(f"[REGISTER] CreateChatRequest: {e}")
-        
-        # Способ 2: если не вышло — пишем в Saved Messages и создаём группу позже
-        if not group_id:
-            try:
-                # Просто шлём себе логин/пароль — группа будет создана при первом входе
-                await client.send_message('me', f"LOGIN: {login}\nPASSWORD: {password}\n---\nНе удаляйте!")
-                group_id = "me"
-            except Exception as e:
-                print(f"[REGISTER] Fallback: {e}")
-                return web.json_response({"ok": False, "error": f"Не удалось: {e}"}, status=500)
-        
-        # Пишем логин/пароль в новую группу
-        if group_id != "me":
-            try:
-                entity = await client.get_entity(int(group_id))
-                await client.send_message(entity, f"LOGIN: {login}\nPASSWORD: {password}\n---\nНе удаляйте это сообщение!")
-            except Exception:
-                pass
+        # Saved Messages = домашняя папка
+        me_entity = await client.get_me()
+        home_id = str(me_entity.id)
         
         return web.json_response({
             "ok": True,
-            "message": "Группа создана!",
-            "group_id": group_id,
-            "group_name": group_title
+            "message": "Регистрация успешна!",
+            "group_id": home_id,
+            "group_name": "Избранное (Saved Messages)"
         })
+    except Exception as e:
+        traceback.print_exc()
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
     except Exception as e:
         traceback.print_exc()
         return web.json_response({"ok": False, "error": str(e)}, status=500)
