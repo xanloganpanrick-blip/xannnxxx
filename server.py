@@ -219,33 +219,6 @@ def parse_date(val):
     return ""
 
 
-def phones_match(p1, p2):
-    d1 = re.sub(r'[^0-9]', '', str(p1 or ''))
-    d2 = re.sub(r'[^0-9]', '', str(p2 or ''))
-    if not d1 or not d2:
-        return False
-    return d1[-10:] == d2[-10:]
-
-
-def parse_bot_response(text):
-    result = {'phones': [], 'snils': [], 'inn': [], 'passport': []}
-    phone_pattern = r'(?:\+?79\d{9})'
-    for phone in re.findall(phone_pattern, text):
-        clean = re.sub(r'[^0-9]', '', phone)
-        if len(clean) == 11 and clean.startswith('79') and clean not in result['phones']:
-            result['phones'].append(clean)
-    for snil in re.findall(r'\b\d{11}\b', text):
-        if snil not in result['snils']:
-            result['snils'].append(snil)
-    for inn in re.findall(r'\b\d{12}\b', text):
-        if inn not in result['inn']:
-            result['inn'].append(inn)
-    for passport in re.findall(r'\b\d{10}\b', text):
-        if passport not in result['passport']:
-            result['passport'].append(passport)
-    return result
-
-
 def extract_phones_from_text(text):
     phones = []
     for phone in re.findall(r'(?:\+?79\d{9})', text):
@@ -274,25 +247,6 @@ def extract_address_from_report(text):
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             return match.group(1).strip()
-    return None
-
-
-def extract_apartment_from_report(text, target_address):
-    """Извлекает квартиру из отчёта по адресу"""
-    # Ищем все адреса в отчёте
-    address_pattern = r'(?:Адрес|Контактный адрес|Адрес регистрации|АДРЕС)[:\s]+([^\n]+)'
-    matches = re.findall(address_pattern, text, re.IGNORECASE)
-    
-    # Нормализуем целевой адрес (без квартиры)
-    target_clean = re.sub(r',?\s*кв\.?\s*\d+', '', target_address).strip().lower()
-    
-    for addr in matches:
-        addr_clean = re.sub(r',?\s*кв\.?\s*\d+', '', addr).strip().lower()
-        if target_clean in addr_clean or addr_clean in target_clean:
-            # Ищем квартиру в этом адресе
-            apt_match = re.search(r'кв\.?\s*(\d+)', addr, re.IGNORECASE)
-            if apt_match:
-                return apt_match.group(1)
     return None
 
 
@@ -772,27 +726,6 @@ async def wait_xlsx(client, bot, timeout=180, since_msg_id=None):
     return None
 
 
-async def wait_txt(client, bot, timeout=180, since_msg_id=None):
-    """Ожидает TXT файл от бота"""
-    e = await client.get_entity(bot)
-    start = time.time()
-    print(f"[BOT] Ожидаю TXT от {bot}...")
-    while time.time() - start < timeout:
-        msgs = await client.get_messages(e, limit=5)
-        for msg in msgs:
-            if not msg or not msg.document:
-                continue
-            if since_msg_id is not None and msg.id <= since_msg_id:
-                continue
-            for a in msg.document.attributes:
-                if isinstance(a, DocumentAttributeFilename) and a.file_name.endswith('.txt'):
-                    print(f"[BOT] Получен TXT: {a.file_name}")
-                    return msg
-        await asyncio.sleep(3)
-    print(f"[BOT] TXT не получен")
-    return None
-
-
 async def wait_report(client, bot, phone, timeout=300):
     """Ожидает отчёт от бота по номеру телефона"""
     e = await client.get_entity(bot)
@@ -996,111 +929,6 @@ def fill_snils_dates(ws, response_records):
     
     print(f"[FILL-SNILS] ИТОГО заполнено дат: {filled}")
     return filled
-
-
-def fill_phones_by_numbers(ws, phone_to_fio_map):
-    """Заполняет ФИО по номерам из TXT (как в minecraft.py)"""
-    filled = 0
-    print(f"[FILL-PHONES-BY-NUMBERS] Начинаю заполнение ФИО по номерам. Карта: {len(phone_to_fio_map)}")
-    
-    for row in range(2, ws.max_row + 1):
-        phone_val = clean_phone(str(ws.cell(row=row, column=COL_PHONE).value or "").strip())
-        if not phone_val:
-            continue
-        
-        # Ищем номер в карте (без +7)
-        phone_digits = re.sub(r'[^0-9]', '', phone_val)
-        if len(phone_digits) >= 10:
-            phone_key = '7' + phone_digits[-10:]
-        else:
-            phone_key = phone_digits
-        
-        if phone_key in phone_to_fio_map:
-            fio_val = phone_to_fio_map[phone_key]
-            if fio_val:
-                ws.cell(row=row, column=COL_FIO).value = normalize_fio_local(fio_val)
-                filled += 1
-                print(f"[FILL-PHONES-BY-NUMBERS] Строка {row}: ЗАПОЛНЕНО ФИО для {phone_key}")
-    
-    print(f"[FILL-PHONES-BY-NUMBERS] ИТОГО заполнено ФИО: {filled}")
-    return filled
-
-
-def fill_apartments_from_report(ws, address_to_apartment_map):
-    """Заполняет квартиры по нормализованному адресу из словаря"""
-    filled = 0
-    print(f"[FILL-APARTMENTS] Начинаю заполнение квартир. Карта: {len(address_to_apartment_map)}")
-    
-    for row in range(2, ws.max_row + 1):
-        addr_val = str(ws.cell(row=row, column=COL_ADDR).value or "").strip()
-        if not addr_val or addr_val == 'None':
-            continue
-        
-        # Нормализуем адрес для сравнения
-        addr_clean = normalize_address_local(addr_val)
-        
-        # Проверяем ключи в мапе
-        for key, apartment in address_to_apartment_map.items():
-            key_clean = normalize_address_local(key)
-            if key_clean == addr_clean or key_clean in addr_clean or addr_clean in key_clean:
-                # Добавляем квартиру после запятой
-                ws.cell(row=row, column=COL_ADDR).value = f"{addr_val.rstrip(',')}, {apartment}"
-                filled += 1
-                print(f"[FILL-APARTMENTS] Строка {row}: +кв {apartment}")
-                break
-    
-    print(f"[FILL-APARTMENTS] ИТОГО заполнено квартир: {filled}")
-    return filled
-
-
-# ====================== ДОБИВ ЧЕРЕЗ САУРОН ======================
-async def dobiv_sauron(client, bot, fio, date, account_id, row_num, ws, wb, result_file, add_log):
-    try:
-        norm_date = parse_date(date)
-        if not norm_date:
-            norm_date = date
-        
-        query = f"{fio} {norm_date}"
-        add_log(f"[ДОБИВ] Акк {account_id}, строка {row_num}: {query}")
-        
-        await client.send_message(bot, query)
-        await asyncio.sleep(5)
-        
-        async for msg in client.iter_messages(bot, limit=10):
-            if msg.text and ("ОТЧЕТ" in msg.text or "ТЕЛЕФОНЫ" in msg.text):
-                phones = extract_phones_from_text(msg.text)
-                if phones:
-                    add_log(f"[ДОБИВ] Найдены телефоны: {phones}")
-                    return phones
-                break
-        
-        return []
-    except Exception as e:
-        add_log(f"[ДОБИВ] Ошибка: {e}")
-        return []
-
-
-async def dobiv_by_numbers(client, bot, phone, add_log):
-    """Пробивает номер телефона через бот 2 и возвращает отчёт"""
-    try:
-        # Добавляем 7 в начале, если её нет
-        phone_clean = clean_phone(phone)
-        phone_for_send = clean_phone_without_plus(phone)
-        if not phone_for_send.startswith('7'):
-            phone_for_send = '7' + phone_for_send
-        
-        add_log(f"[ДОБИВ-КВАРТИР] Отправляю номер: {phone_for_send}")
-        
-        # Ждём отчёт
-        report = await wait_report(client, bot, phone_for_send, timeout=300)
-        if report:
-            add_log(f"[ДОБИВ-КВАРТИР] Получен отчёт для {phone_for_send}")
-            return report
-        
-        return None
-    except Exception as e:
-        add_log(f"[ДОБИВ-КВАРТИР] Ошибка: {e}")
-        return None
 
 
 # ====================== ПОИСК ИНН В ГРУППЕ ======================
@@ -2318,7 +2146,7 @@ async def handle_stop(request):
 
 
 async def handle_finish_session(request):
-    """Завершение сессии: отправка всех актуальных файлов с именами ИНН/УК_Адрес в бот"""
+    """Завершение сессии: создание ZIP с разбитыми базами (ИНН_Адрес.xlsx) и отправка в бот"""
     try:
         d = await request.json()
         ss = d.get("session", "")
@@ -2327,41 +2155,54 @@ async def handle_finish_session(request):
         chat_id = d.get("chat_id", "")
         group_id = d.get("group_id", None)
         topic_id = d.get("topic_id", None)
+        headers = d.get("headers", [])
+        rows = d.get("rows", [])
         
-        if not ss:
-            return web.json_response({"ok": False, "error": "Нет сессии"}, status=400)
-        
-        # Ищем самый свежий result файл
-        result_files = []
-        for f in os.listdir(TEMP_DIR):
-            if f.startswith('result_') and f.endswith('.xlsx'):
-                result_files.append(os.path.join(TEMP_DIR, f))
-        
-        if not result_files:
-            return web.json_response({"ok": True, "message": "Нет файлов для отправки"})
-        
-        # Сортируем по времени создания (самый новый первый)
-        result_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-        latest_file = result_files[0]
-        
-        # Загружаем таблицу
-        wb = load_workbook(latest_file, data_only=True)
+        # Создаём таблицу из переданных данных
+        wb = Workbook()
         ws = wb.active
+        if headers:
+            ws.append(headers)
+            for row in rows:
+                ws.append(row)
+        else:
+            # Fallback: ищем последний result файл
+            result_files = []
+            for f in os.listdir(TEMP_DIR):
+                if f.startswith('result_') and f.endswith('.xlsx'):
+                    result_files.append(os.path.join(TEMP_DIR, f))
+            if result_files:
+                result_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                wb = load_workbook(result_files[0], data_only=True)
+                ws = wb.active
         
-        # Переименовываем файлы по ИНН/адресу
-        if bot_token and chat_id and group_id:
+        if ws.max_row <= 1:
+            return web.json_response({"ok": False, "error": "Нет данных для архивации"}, status=400)
+        
+        # Сохраняем итоговую таблицу
+        final_path = os.path.join(TEMP_DIR, f"session_final_{int(time.time())}.xlsx")
+        wb.save(final_path)
+        
+        # Пытаемся переименовать по ИНН
+        renamed = tables_names or []
+        if ss and group_id:
             try:
                 client = await get_client(ss)
                 renamed = await rename_files_by_address(ws, client, group_id, topic_id, None, tables_names)
-                
-                # Отправляем каждый файл с новым именем
-                split_result = split_by_table_num(
-                    [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)],
-                    [[ws.cell(row=r, column=c).value for c in range(1, ws.max_column + 1)] for r in range(2, ws.max_row + 1)]
-                )
-                
-                if split_result:
-                    for table_num, table_data in split_result.items():
+            except Exception as e:
+                print(f"[FINISH] Ошибка переименования: {e}")
+        
+        # Разбиваем по N таблицы и создаём ZIP
+        split_result = split_by_table_num(
+            [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)],
+            [[ws.cell(row=r, column=c).value for c in range(1, ws.max_column + 1)] for r in range(2, ws.max_row + 1)]
+        )
+        
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            if split_result:
+                for table_num, table_data in split_result.items():
+                    try:
                         geo_result = geo_filter(table_data['headers'], table_data['rows'])
                         ws_data = [geo_result['headers']] + geo_result['rows']
                         
@@ -2370,26 +2211,60 @@ async def handle_finish_session(request):
                         for row in ws_data:
                             ws_temp.append(row)
                         
-                        xlsx_path = os.path.join(TEMP_DIR, f"session_{int(time.time())}_{table_num}.xlsx")
-                        wb_temp.save(xlsx_path)
+                        xlsx_buffer = io.BytesIO()
+                        wb_temp.save(xlsx_buffer)
+                        xlsx_buffer.seek(0)
                         
                         idx = int(table_num) - 1
                         name = renamed[idx] if idx < len(renamed) else f"ГЕО_{table_num}"
-                        
-                        # Отправляем в бот
-                        caption = f"Сессия завершена: {name}"
-                        await send_file_to_bot(bot_token, chat_id, xlsx_path, caption, topic_id)
+                        name = re.sub(r'[<>:"/\\|?*]', '_', name)
+                        zf.writestr(f"{name}.xlsx", xlsx_buffer.getvalue())
+                    except Exception as e:
+                        print(f"[FINISH-ZIP] Ошибка таблицы {table_num}: {e}")
+            else:
+                # Одна таблица — кладём как есть
+                xlsx_buffer = io.BytesIO()
+                wb.save(xlsx_buffer)
+                xlsx_buffer.seek(0)
+                name = renamed[0] if renamed else "result"
+                name = re.sub(r'[<>:"/\\|?*]', '_', name)
+                zf.writestr(f"{name}.xlsx", xlsx_buffer.getvalue())
+            
+            # Добавляем numbers.txt
+            phones_all = set()
+            for row in rows:
+                phone_val = str(row[3] if len(row) > 3 else "").strip() if headers else ""
+                if not phone_val and len(row) >= 4:
+                    # Ищем колонку Номер
+                    for i, h in enumerate(headers):
+                        if 'номер' in str(h).lower() and i < len(row):
+                            phone_val = str(row[i]).strip()
+                            break
+                if phone_val and phone_val not in ('', 'None', '0'):
+                    clean = clean_phone_without_plus(phone_val)
+                    if clean:
+                        phones_all.add(clean)
+            
+            if phones_all:
+                zf.writestr('numbers.txt', '\n'.join(sorted(phones_all)))
+        
+        zip_buffer.seek(0)
+        zip_path = os.path.join(TEMP_DIR, f"session_{int(time.time())}.zip")
+        with open(zip_path, 'wb') as f:
+            f.write(zip_buffer.getvalue())
+        
+        # Отправляем в бот если настроен
+        if bot_token and chat_id:
+            try:
+                await send_zip_to_bot(bot_token, chat_id, zip_path, "Сессия завершена! ZIP с базами (ИНН_Адрес / УК_Адрес)", topic_id)
             except Exception as e:
-                print(f"[FINISH] Ошибка отправки: {e}")
-        else:
-            # Просто отправляем итоговый файл
-            if bot_token and chat_id:
-                await send_file_to_bot(bot_token, chat_id, latest_file, "Сессия завершена (Итоговая таблица)", topic_id)
+                print(f"[FINISH] Ошибка отправки в бот: {e}")
         
         return web.json_response({
             "ok": True,
-            "message": "Сессия завершена, файлы отправлены в бот",
-            "files_count": len(result_files)
+            "message": f"ZIP создан: {len(split_result) if split_result else 1} баз",
+            "files_count": len(split_result) if split_result else 1,
+            "zip_path": zip_path
         })
     except Exception as e:
         print(f"[FINISH] Ошибка: {e}")
@@ -2427,6 +2302,15 @@ async def handle_normalize_addresses(request):
         })
 
 
+async def handle_download_file(request):
+    """Отдача ZIP/XLSX файла для скачивания"""
+    filename = request.match_info.get("filename", "")
+    filepath = os.path.join(TEMP_DIR, os.path.basename(filename))
+    if not os.path.exists(filepath):
+        return web.json_response({"ok": False, "error": "Файл не найден"}, status=404)
+    return web.FileResponse(filepath)
+
+
 # ====================== ЗАПУСК ======================
 app = web.Application(middlewares=[log_and_cors], client_max_size=200 * 1024 * 1024)
 app.router.add_get("/", handle_root)
@@ -2439,6 +2323,7 @@ app.router.add_post("/full-probev", handle_full_probev)
 app.router.add_post("/stop", handle_stop)
 app.router.add_post("/finish-session", handle_finish_session)
 app.router.add_post("/normalize-addresses", handle_normalize_addresses)
+app.router.add_get("/download/{filename}", handle_download_file)
 
 
 async def on_startup(app):

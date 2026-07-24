@@ -221,37 +221,46 @@
                 </div>
             </div>
 
-            <!-- ПЛАШКА: Завершение сессии и TXT для чекера -->
+            <!-- ПЛАШКА: Завершение сессии (3 шага) -->
             <div class="card" id="sessionCard" style="display:none;">
                 <h3>Завершение сессии</h3>
-                <p class="text-sm mb-8">После завершения пробива скачайте файлы с именами ИНН/УК_Адрес</p>
-                <div class="flex">
-                    <button class="btn-white" id="btnFinishSession" onclick="finishSessionAndDownload()">Завершить и скачать файлы</button>
-                    <button class="btn-dark btn-sm" id="btnDownloadCheckTxt2" onclick="downloadCheckTxt()" disabled>Скачать TXT для чека</button>
+                
+                <!-- Шаг 1: Скачать TXT -->
+                <div id="stepEnd1">
+                    <div class="step"><div class="step-num active">1</div><div>
+                        <p class="text-sm">Скачайте TXT с номерами для проверки максов</p>
+                        <button class="btn-dark btn-sm mt-8" id="btnDownloadCheckTxt2" onclick="downloadCheckTxt()" disabled>Скачать TXT (чекать максы)</button>
+                    </div></div>
                 </div>
-                <div class="text-xs mt-8" style="color:#666;">
-                    TXT содержит номера для проверки максов. После скачивания отправьте боту для добива ФИО.
-                </div>
-            </div>
 
-            <!-- ПЛАШКА: Загрузка TXT с Номер Имя (как в minecraft) -->
-            <div class="card" id="txtUploadCard" style="display:none;">
-                <h3>Добив по TXT (Номер Имя)</h3>
-                <p class="text-sm mb-8">Загрузите TXT файл где каждая строка: Номер Имя (без +7)</p>
-                <div class="flex">
-                    <button class="btn-dark btn-sm" onclick="document.getElementById('dobiTxtInput').click()">Загрузить TXT с номерами</button>
-                    <button class="btn-yellow btn-sm" id="btnRunDobivFromTxt" onclick="runDobivFromTxt()" disabled>ЗАПУСТИТЬ ДОБИВ</button>
+                <!-- Шаг 2: Загрузить TXT с Номер Имя -->
+                <div id="stepEnd2" style="display:none;">
+                    <div class="step"><div class="step-num">2</div><div>
+                        <p class="text-sm">Загрузите TXT файл где каждая строка: <b>Номер Имя</b> (без +7)</p>
+                        <div class="flex mt-8">
+                            <button class="btn-dark btn-sm" onclick="document.getElementById('dobiTxtInput').click()">Загрузить TXT</button>
+                            <button class="btn-yellow btn-sm" id="btnFilterByTxt" onclick="filterByUploadedTxt()" disabled>Запустить фильтрацию</button>
+                        </div>
+                        <input type="file" id="dobiTxtInput" accept=".txt" style="display:none" onchange="loadDobivTxt(event)">
+                        <div id="dobiTxtInfo" class="text-sm mt-8"></div>
+                        <div id="filterResult" class="text-sm mt-8"></div>
+                    </div></div>
                 </div>
-                <input type="file" id="dobiTxtInput" accept=".txt" style="display:none" onchange="loadDobivTxt(event)">
-                <div id="dobiTxtInfo" class="text-sm mt-8"></div>
-                <div id="dobiTxtData" class="hidden"></div>
+
+                <!-- Шаг 3: Завершить и скачать ZIP -->
+                <div id="stepEnd3" style="display:none;">
+                    <div class="step"><div class="step-num">3</div><div>
+                        <p class="text-sm">Завершите сессию — каждая база будет названа <b>ИНН_Адрес.xlsx</b> или <b>УК_Адрес.xlsx</b></p>
+                        <button class="btn-white mt-8" id="btnFinishSession" onclick="finishSessionAndDownload()">Завершить и скачать ZIP</button>
+                    </div></div>
+                </div>
             </div>
 
             <div class="card">
                 <h3>Лог</h3>
                 <div class="log-box" id="pLog"><span class="dim">Ожидание...</span></div>
                 <div class="flex mt-8">
-                    <button class="btn-dark btn-sm" onclick="document.getElementById('pLog').innerHTML='<span class=\"dim\">Очищено.</span>'">Очистить лог</button>
+                    <button class="btn-dark btn-sm" onclick="document.getElementById('pLog').innerHTML='<span class="dim">Очищено.</span>'">Очистить лог</button>
                 </div>
             </div>
         </div>
@@ -632,9 +641,12 @@ function clearUploads() {
     document.getElementById('btnFinishSession').disabled = true;
     document.getElementById('btnDownloadCheckTxt2').disabled = true;
     document.getElementById('sessionCard').style.display = 'none';
-    document.getElementById('txtUploadCard').style.display = 'none';
+    document.getElementById('stepEnd2').style.display = 'none';
+    document.getElementById('stepEnd3').style.display = 'none';
     document.getElementById('dobiTxtInfo').textContent = '';
-    document.getElementById('btnRunDobivFromTxt').disabled = true;
+    document.getElementById('filterResult').innerHTML = '';
+    document.getElementById('btnFilterByTxt').disabled = true;
+    document.getElementById('btnFilterByTxt').textContent = 'Запустить фильтрацию';
 }
 
 function updateFileList() {
@@ -716,7 +728,8 @@ async function mergeUploaded() {
                 document.getElementById('btnFinishSession').disabled = false;
                 document.getElementById('btnDownloadCheckTxt2').disabled = false;
                 document.getElementById('sessionCard').style.display = 'block';
-                document.getElementById('txtUploadCard').style.display = 'block';
+                document.getElementById('stepEnd2').style.display = 'none';
+                document.getElementById('stepEnd3').style.display = 'none';
                 toast('Объединено успешно!', true);
             } else {
                 toast('Ошибка: ' + (data.error || 'Неизвестно'), false);
@@ -778,7 +791,8 @@ async function mergeUploaded() {
             document.getElementById('btnFinishSession').disabled = false;
             document.getElementById('btnDownloadCheckTxt2').disabled = false;
             document.getElementById('sessionCard').style.display = 'block';
-            document.getElementById('txtUploadCard').style.display = 'block';
+            document.getElementById('stepEnd2').style.display = 'none';
+            document.getElementById('stepEnd3').style.display = 'none';
             toast('Объединено ' + allTables.length + ' таблиц!', true);
         } else {
             toast('Нет валидных XLSX или ZIP файлов', false);
@@ -896,79 +910,101 @@ function loadCheckTxt(e) {
 }
 
 function loadDobivTxt(e) {
-    loadCheckTxt(e);
+    var f = e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+        var txt = ev.target.result;
+        var lines = txt.split('\n').filter(function(l) { return l.trim(); });
+        var phoneToFio = {};
+        for (var i = 0; i < lines.length; i++) {
+            var parts = lines[i].trim().split(/\s+/, 2);
+            if (parts.length >= 2) {
+                var phone = cleanPhoneWithoutPlus(parts[0]);
+                if (phone) phoneToFio[phone] = parts.slice(1).join(' ');
+            } else {
+                var phone = cleanPhoneWithoutPlus(parts[0]);
+                if (phone) phoneToFio[phone] = '';
+            }
+        }
+        checkTxtData = phoneToFio;
+        document.getElementById('dobiTxtInfo').textContent = 'Загружено: ' + Object.keys(phoneToFio).length + ' номеров';
+        document.getElementById('btnFilterByTxt').disabled = false;
+        toast('TXT загружен! ' + Object.keys(phoneToFio).length + ' номеров.', true);
+    };
+    reader.readAsText(f);
 }
 
-async function runDobivFromTxt() {
+function filterByUploadedTxt() {
     if (!checkTxtData || !Object.keys(checkTxtData).length) return toast('Сначала загрузите TXT', false);
-    if (!mergedData) return toast('Сначала загрузите таблицу', false);
+    if (!mergedData || !mergedData.rows) return toast('Нет таблицы', false);
     
-    var btn = document.getElementById('btnRunDobivFromTxt');
-    btn.disabled = true;
-    btn.textContent = 'ЗАПУСК...';
+    var headers = mergedData.headers || [];
+    var rows = mergedData.rows || [];
     
-    try {
-        addLog('[ДОБИВ TXT] Запуск добива ФИО по номерам...', 'info');
-        addLog('[ДОБИВ TXT] Номеров в TXT: ' + Object.keys(checkTxtData).length, 'info');
-        
-        var headers = mergedData.headers || [];
-        var rows = mergedData.rows || [];
-        
-        var phoneIdx = -1;
-        var fioIdx = -1;
-        for (var i = 0; i < headers.length; i++) {
-            var h = headers[i].toLowerCase().trim();
-            if (h === 'номер' || h.includes('телефон') || h.includes('phone') || h.includes('tel')) {
-                if (!h.includes('паспорт') && !h.includes('инн')) phoneIdx = i;
-            }
-            if (h.includes('фио') || h.includes('fio') || h.includes('имя') || h.includes('фамилия')) {
-                fioIdx = i;
-            }
+    // Находим колонку с номером
+    var phoneIdx = -1;
+    var fioIdx = -1;
+    for (var i = 0; i < headers.length; i++) {
+        var h = headers[i].toLowerCase().trim();
+        if (h === 'номер' || h.includes('телефон') || h.includes('phone') || h.includes('tel')) {
+            if (!h.includes('паспорт') && !h.includes('инн')) phoneIdx = i;
         }
-        if (phoneIdx === -1) {
-            toast('Колонка с номерами не найдена', false);
-            btn.disabled = false;
-            btn.textContent = 'ЗАПУСТИТЬ ДОБИВ';
-            return;
-        }
-        if (fioIdx === -1) fioIdx = 1;
+        if (h.includes('фио') || h.includes('fio') || h.includes('имя') || h.includes('фамилия')) fioIdx = i;
+    }
+    if (phoneIdx === -1) return toast('Колонка с номерами не найдена', false);
+    if (fioIdx === -1) fioIdx = 1;
+    
+    var beforeCount = rows.length;
+    var kept = [];
+    var filled = 0;
+    var deleted = 0;
+    
+    for (var ri = 0; ri < rows.length; ri++) {
+        var row = rows[ri];
+        if (phoneIdx >= row.length) { deleted++; continue; }
         
-        var filled = 0;
-        for (var ri = 0; ri < rows.length; ri++) {
-            var row = rows[ri];
-            if (phoneIdx < row.length) {
-                var phone = cleanPhoneWithoutPlus(row[phoneIdx]);
-                if (phone && checkTxtData[phone]) {
-                    var newFio = checkTxtData[phone];
-                    // Каждое слово с прописной
-                    if (newFio) {
-                        newFio = newFio.split(' ').map(function(w) {
-                            return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
-                        }).join(' ');
-                        row[fioIdx] = newFio;
-                        filled++;
-                    }
+        var phone = cleanPhoneWithoutPlus(row[phoneIdx]);
+        if (!phone) { deleted++; continue; }
+        
+        // Проверяем, есть ли номер в TXT пользователя
+        if (checkTxtData[phone]) {
+            // Заполняем ФИО если есть
+            var newFio = checkTxtData[phone];
+            if (newFio && fioIdx < row.length) {
+                newFio = newFio.split(' ').map(function(w) {
+                    return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+                }).join(' ');
+                if (row[fioIdx] !== newFio) {
+                    row[fioIdx] = newFio;
+                    filled++;
                 }
             }
+            kept.push(row);
+        } else {
+            deleted++;
         }
-        
-        mergedData.rows = rows;
-        renderTablePreview();
-        addLog('[ДОБИВ TXT] Заполнено ФИО: ' + filled, 'ok');
-        
-        // Показываем кнопку завершения сессии
-        document.getElementById('btnFinishSession').disabled = false;
-        document.getElementById('sessionCard').style.display = 'block';
-        
-        toast('Заполнено ' + filled + ' строк!', true);
-        
-    } catch(e) {
-        addLog('[ДОБИВ TXT] Ошибка: ' + e.message, 'err');
-        toast('Ошибка: ' + e.message, false);
     }
     
-    btn.disabled = false;
-    btn.textContent = 'ЗАПУСТИТЬ ДОБИВ';
+    mergedData.rows = kept;
+    renderTablePreview();
+    
+    document.getElementById('filterResult').innerHTML = 
+        '<span class="green">Фильтрация завершена!</span><br>' +
+        'Было строк: ' + beforeCount + '<br>' +
+        'Оставлено: ' + kept.length + ' <span class="green">(совпали с TXT)</span><br>' +
+        'Удалено: ' + deleted + ' <span class="red">(нет в TXT)</span><br>' +
+        'Заполнено ФИО: ' + filled;
+    
+    addLog('[ФИЛЬТР TXT] Было ' + beforeCount + ' → осталось ' + kept.length + ' (удалено ' + deleted + ', заполнено ФИО ' + filled + ')', 'ok');
+    
+    // Показываем шаг 3
+    document.getElementById('stepEnd3').style.display = 'block';
+    document.getElementById('btnFinishSession').disabled = false;
+    document.getElementById('btnFilterByTxt').disabled = true;
+    document.getElementById('btnFilterByTxt').textContent = 'Готово';
+    
+    toast('Оставлено ' + kept.length + ' строк, удалено ' + deleted, true);
 }
 
 function downloadCheckTxt() {
@@ -1004,6 +1040,9 @@ function downloadCheckTxt() {
     a.click();
     URL.revokeObjectURL(a.href);
     toast('Скачано ' + phones.length + ' номеров', true);
+    
+    // Показываем шаг 2
+    document.getElementById('stepEnd2').style.display = 'block';
 }
 
 async function startProbiv() {
@@ -1117,7 +1156,8 @@ async function startProbiv() {
             document.getElementById('btnFinishSession').disabled = false;
             document.getElementById('btnDownloadCheckTxt2').disabled = false;
             document.getElementById('sessionCard').style.display = 'block';
-            document.getElementById('txtUploadCard').style.display = 'block';
+            document.getElementById('stepEnd2').style.display = 'none';
+            document.getElementById('stepEnd3').style.display = 'none';
         }
     } catch(e) {
         addLog('[x] ОШИБКА: ' + e.message, 'err');
@@ -1166,31 +1206,49 @@ async function finishSession() {
 }
 
 async function finishSessionAndDownload() {
-    if (!confirm('Завершить сессию и скачать все файлы? Файлы будут названы ИНН_Адрес или УК_Адрес.')) return;
-    addLog('[СЕССИЯ] Завершение и скачивание...', 'info');
+    if (!confirm('Завершить сессию и скачать ZIP с базами? Каждая база будет названа ИНН_Адрес или УК_Адрес.')) return;
+    addLog('[СЕССИЯ] Завершение и запрос ZIP...', 'info');
     document.getElementById('btnFinishSession').disabled = true;
+    document.getElementById('btnFinishSession').textContent = 'Формирую ZIP...';
     
     try {
+        var srv = getServerUrl();
+        if (!srv) throw new Error('Сервер не настроен');
+        
+        // Отправляем данные на сервер для формирования ZIP
         var resp = await apiPost('/finish-session', {
             session: document.getElementById('pAcc').value,
             tables_names: tableNames,
             bot_token: DB.botToken || '',
             chat_id: DB.botChatId || '',
             group_id: DB.group_id || '',
-            topic_id: DB.topic_id || ''
+            topic_id: DB.topic_id || '',
+            headers: mergedData.headers,
+            rows: mergedData.rows
         });
-        addLog('[СЕССИЯ] Завершена! Файлы готовы.', 'ok');
         
-        // Скачиваем актуальную таблицу
+        addLog('[СЕССИЯ] Сервер обработал запрос. ' + (resp.message || ''), 'ok');
+        
+        // Скачиваем ZIP с разбитыми базами
+        if (resp.zip_path) {
+            var zipName = resp.zip_path.split('/').pop().split('\\').pop();
+            var a = document.createElement('a');
+            a.href = srv + '/download/' + zipName;
+            a.download = 'session_result.zip';
+            a.click();
+            addLog('[СЕССИЯ] ZIP скачан: ' + (resp.files_count || '?') + ' баз.', 'ok');
+        }
+        
+        // Скачиваем итоговую таблицу локально
         downloadMergedAsXlsx();
         
-        // Скачиваем TXT для чека максов
-        downloadCheckTxt();
-        
         toast('Сессия завершена! Файлы скачаны.', true);
+        addLog('[СЕССИЯ] Готово! Базы названы ИНН_Адрес / УК_Адрес.', 'ok');
     } catch(e) {
         addLog('[СЕССИЯ] Ошибка: ' + e.message, 'err');
         toast('Ошибка: ' + e.message, false);
+        document.getElementById('btnFinishSession').disabled = false;
+        document.getElementById('btnFinishSession').textContent = 'Завершить и скачать ZIP';
     }
 }
 
